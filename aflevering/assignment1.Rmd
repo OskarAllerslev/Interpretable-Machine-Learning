@@ -1,0 +1,112 @@
+
+
+
+
+
+```{r, echo = FALSE}
+
+library(data.table)
+library(tidyverse)
+library(corrr)
+library(corrplot)
+library(mlr3verse)
+```
+
+
+
+```{r, echo = FALSE}
+
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
+```
+
+# Looking at the data
+
+```{r}
+str(data)
+
+num_data <- data %>% 
+  dplyr::select(-Date_start_contract,
+                -Date_last_renewal,
+                -Date_next_renewal,
+                -Date_birth,
+                -Distribution_channel,
+                -Date_lapse,
+                -Date_driving_licence,
+                -Type_fuel,
+                -Length)
+M <- stats::cor(num_data)
+corrplot::corrplot(M, order = 'AOE')
+
+
+
+
+
+```
+
+We notice that there are multiple clusters, which indicate high correlation between some features. It could be desirable to group these, or remove some, if we decide to choose a model whose error relies heavily on the number of parameters. 
+
+```{r}
+
+
+lubridate::floor_date(data$Date_last_renewal, "month")
+group_dat <- data %>%
+  dplyr::mutate()
+  # dplyr::group_by(ID)
+
+data <- data %>% 
+  dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_year > 0, 1, 0))
+
+
+```
+
+
+
+
+```{r}
+
+ggplot2::ggplot(data = data, ggplot2::aes(x = Cost_claims_year)) +
+  ggplot2::geom_density()
+ggplot2::ggplot(data = data, ggplot2::aes(x = log(Cost_claims_year))) +
+  ggplot2::geom_density()
+
+
+
+
+```
+
+
+We almost, in a pratical sense 
+
+```{r}
+
+
+task_frek = mlr3::as_task_classif(data, target = "claim_indicator")
+resampling_frek = mlr3::rsmp("holdout", ratio = 0.8)
+resampling_frek$instantiate(task_frek)
+
+train_idx <- resampling$train_set(1)
+test_idx  <- resampling$test_set(1)
+
+
+graph = po("encode") %>>%
+  po("scale") %>>%
+  lrn("classif.glmnet",
+      alpha = to_tune(0,1),
+      s = to_tune(0,1))
+
+
+
+
+
+```
+
+E(skade ja eller nej) E(skadestørrelse)
+
+
+
+
+
+
+
+
+
