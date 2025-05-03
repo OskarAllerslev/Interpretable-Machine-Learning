@@ -142,16 +142,18 @@ ggplot2::ggplot(data = agg, ggplot2::aes(x = log(Cost_claims_year_sum))) +
 
 
 We almost, in a pratical sense 
-
 ```{r}
+task_frek <- as_task_classif(
+  agg,
+  target   = "claim_indicator",
+  positive = "1",                         # '1' = skade
+  id       = "claim_freq"
+)
 
-
-task_frek = mlr3::as_task_classif(agg, target = "claim_indicator", positive = "1")
-
-
-### encoding
-outer_resampling_frek = mlr3::rsmp("holdout", ratio = 0.8)
-outer_resampling_frek$instantiate(task_frek)
+outer_split <- rsmp("holdout", ratio = 0.8)
+outer_split$instantiate(task_frek)
+train_rows  <- outer_split$train_set(1)
+test_rows   <- outer_split$test_set(1)
 
 
 graph = po("encode") %>>%
@@ -161,46 +163,50 @@ graph = po("encode") %>>%
       alpha = to_tune(0,1),
       s = to_tune(0,1))
 
-glrn = as_learner(graph)
-
-### inner cs og at 
+learner <- as_learner(graph)
 
 
-at = AutoTuner$new(
-  learner = glrn,
+at <- auto_tuner(
+  learner    = learner,
   resampling = rsmp("cv", folds = 5),
-  measure = msr("classif.bbrier"),
-  tuner = tnr("random_search"),
-  terminator = trm("evals", n_evals = 5)
+  measure    = msr("classif.brier"),     
+  tuner      = tnr("random_search"),
+  term_evals = 5
 )
 
-### train model
+outer_cv   <- rsmp("cv", folds = 5)
+rr_nested  <- resample(task_frek, at, outer_cv,
+                       store_models = TRUE, store_backends = FALSE)
 
-at$train(task_frek, 
-         row_ids = outer_resampling_frek$train_set(1))
+nested_bbrier <- rr_nested$aggregate(msr("classif.bbrier"))
+nested_auc   <- rr_nested$aggregate(msr("classif.auc"))
+nested_acc   <- rr_nested$aggregate(msr("classif.acc"))
 
-
-outer_cv = rsmp("cv", folds = 5)
-rr_nested = resample(task_frek, at, outer_cv)
-
-
-
-pred_outer = rr_nested$prediction()
-pred_outer$score(msr("classif.acc"))
-pred_outer$score(msr("classif.bbrier"))
-
-
-# pred = at$predict(task_frek,
-#                   row_ids = outer_resampling_frek$test_set(1))
-# mse = pred$score(msr("classif.bbrier"))
-
+cat("\nNested CV:\n",
+    "BBrier (↓) :", nested_bbrier,
+    "\nAUC  (↑) :", nested_auc,
+    "\nACC  (↑) :", nested_acc, "\n")
 
 
 
 
 ```
 
-E(skade ja eller nej) E(skadestørrelse)
+
+# model diagnostik
+
+```{r}
+
+pred = at$predict(task_frek, 
+                  row_ids = test_rows)
+pred$confusion
+
+autoplot(pred, type = "roc")
+
+autoplot(pred, type = "stacked")
+
+```
+
 
 
 
