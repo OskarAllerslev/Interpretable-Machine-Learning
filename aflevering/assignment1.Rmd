@@ -58,8 +58,7 @@ We notice that there are multiple clusters, which indicate high correlation betw
 
 data <- fread("Motor vehicle insurance data.csv", sep = ";")
 
-data_trans <- function(data)
-{
+data_trans <- function(data){
   
   today <- Sys.Date()
   
@@ -127,7 +126,6 @@ data_trans <- function(data)
   agg <- agg %>%
     dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
   return(agg)
-
 }
 
 
@@ -170,57 +168,160 @@ ggplot2::ggplot(data = agg, ggplot2::aes(x = log(Cost_claims_year_sum))) +
 
 ```
 
+```{r}
+# tweedie
+library(mlr3learners)
+library(lightgbm)
+library(mlr3extralearners)
+
+task_twd = as_task_regr(agg, target = "Cost_claims_year_sum", 
+                        id = "tweedie")
+
+
+graph_twd = po("encode") %>>%
+  po("scale") %>>%
+  po("learner", lrn("regr.lightgbm",
+    objective              = "tweedie",
+    tweedie_variance_power = to_tune(1.1, 1.9),
+    learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
+    num_leaves             = to_tune(16L, 128L),
+
+    num_iterations         = to_tune(200L, 1000L)
+
+  ))
+
+glrn_twd = GraphLearner$new(graph_twd, id = "tweedie_lgbm")
+resampling = rsmp("cv", folds = 5)
+tuner = tnr("random_search")
+terminator = trm("evals", n_evals = 5)
+measure = msr("regr.mae")
+
+
+at = AutoTuner$new(
+  learner    = glrn_twd,
+  resampling = resampling,
+  measure    = measure,
+  terminator = terminator,
+  tuner      = tuner
+)
+
+at$train(task_twd)
+
+# simuler det der vil være i testen 
+train_combined <- train_X %>% dplyr::mutate(Cost_claims_year = train_y)
+
+dat <- data_trans(train_combined)  
+
+task_x  <- as_task_regr(
+  x = dat,
+  target = "Cost_claims_year_sum",
+  id = "newdata"
+)
+
+
+pred_x = at$predict(task_twd)
+dat <- agg
+
+# 1) Performance‐mål
+mse  <- mean((pred_x$response - dat$Cost_claims_year_sum)^2)
+rmse <- sqrt(mse)
+mae  <- mean(abs(pred_x$response - dat$Cost_claims_year_sum))
+r2   <- cor(pred_x$response, dat$Cost_claims_year_sum)^2
+rmsle<- sqrt(mean((log1p(pred_x$response) - log1p(dat$Cost_claims_year_sum))^2))
+             
+cat("MSE: ",  mse,  "\n")
+cat("RMSE:", rmse, "\n")
+cat("MAE: ",  mae,  "\n")
+cat("R²:  ",  r2,   "\n")
+cat("rmsle:  ",  rmsle,   "\n")
+
+
+ggplot(data = data.frame(
+         obs  = log(dat$Cost_claims_year_sum+1),
+         pred = log(pred_x$response+1)
+       ),
+       aes(x = pred, y = obs)
+) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(x = "Forudsagt", y = "Observeret",
+       title = "Predicted vs Observed")
+
+resid = dat$Cost_claims_year_sum - pred_x$response
+
+# a) Histogram af residualer
+ggplot(data.frame(resid = resid), aes(x = resid)) +
+  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.6) +
+  labs(x = "Residual", title = "Histogram af residualer")
+
+# b) QQ‐plot for at tjekke normalitet
+ggplot(data.frame(resid = resid), aes(sample = resid)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "QQ‐plot af residualer")
+
+# c) Residual vs forudsagt for at tjekke heteroskedasticitet
+ggplot(data.frame(pred = pred_x$response, resid = resid),
+       aes(x = pred, y = resid)
+) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Forudsagt", y = "Residual",
+       title = "Residual vs Predicted")
+
+```
+
 
 We almost, in a pratical sense 
 ```{r}
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
+
+data_F <- data_trans(data)
+
+data_F <- data_F %>% dplyr::select(-Cost_claims_year_sum)
 
 
-
-task_frek <- as_task_classif(
-  agg,
-  target   = "claim_indicator",
-  positive = "1",                         # '1' = skade
-  id       = "claim_freq"
+task_freq = as_task_classif(
+  data_F,
+  target = "claim_indicator",
+  positive = "1",
+  weights = data_F$Exposure,
+  id     = "frek_binary"
 )
 
-outer_split <- rsmp("holdout", ratio = 0.8)
-outer_split$instantiate(task_frek)
-train_rows  <- outer_split$train_set(1)
-test_rows   <- outer_split$test_set(1)
+task_freq$set_col_roles("Exposure", "weight")
 
+graph_freq  = po("encode") %>>%
+            po("scale")  %>>%
+            lrn("classif.xgboost",
+                 predict_type = "prob",
+                 eval_metric  = "logloss",
+                 nrounds      = to_tune(200, 800),
+                 max_depth    = to_tune(3, 7),
+                 eta          = to_tune(0.01, 0.3),
+                 subsample    = to_tune(0.6, 1))
 
-graph = po("encode") %>>%
-  po("scale") %>>%
-  lrn("classif.glmnet",
-      predict_type = "prob",
-      alpha = to_tune(0,1),
-      s = to_tune(0,1))
-
-learner <- as_learner(graph)
-
-
-at <- auto_tuner(
-  learner    = learner,
+at_freq = auto_tuner(
+  learner    = as_learner(graph_bin),
   resampling = rsmp("cv", folds = 5),
-  measure    = msr("classif.brier"),     
+  measure    = msr("classif.bbrier"),
   tuner      = tnr("random_search"),
-  term_evals = 5
+  term_evals = 5 
 )
 
-outer_cv   <- rsmp("cv", folds = 5)
-rr_nested  <- resample(task_frek, at, outer_cv,
-                       store_models = TRUE, store_backends = FALSE)
 
-nested_bbrier <- rr_nested$aggregate(msr("classif.bbrier"))
-nested_auc   <- rr_nested$aggregate(msr("classif.auc"))
-nested_acc   <- rr_nested$aggregate(msr("classif.acc"))
+at_freq$train(task_freq)
 
-cat("\nNested CV:\n",
-    "BBrier (↓) :", nested_bbrier,
-    "\nAUC  (↑) :", nested_auc,
-    "\nACC  (↑) :", nested_acc, "\n")
+pred_freq <- at_freq$predict(task_freq)
 
 
+pred_freq_vec <- tibble::tibble(prob = pred_freq$prob[,1])
+pred_freq_vec <- pred_freq_vec %>% dplyr::mutate(Y = dplyr::if_else(prob> 0.5, 1 , 0)) 
+
+
+autoplot(pred_freq)
+autoplot(pred_freq, type = "roc")
+pred_freq$confusion
 
 
 ```
@@ -230,13 +331,55 @@ cat("\nNested CV:\n",
 
 ```{r}
 
-pred = at$predict(task_frek, 
-                  row_ids = test_rows)
-pred$confusion
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
+data_S <- data_trans(data)
 
-autoplot(pred, type = "roc")
+data_S <- data_F %>% dplyr::select(-claim_indicator)
+data_S <- data_S %>% dplyr::filter(Cost_claims_year_sum > 0)
 
-autoplot(pred, type = "stacked")
+
+
+task_S = as_task_regr(
+  data_S,
+  target = "Cost_claims_year_sum",
+  weights = data_S$Exposure,
+  id     = "skade"
+)
+
+task_S$set_col_roles("Exposure", "weight")
+
+
+graph_S = po("encode") %>>%
+  po("scale") %>>%
+  po("learner", lrn("regr.cv_glmnet",
+    family           = "gaussian",
+    alpha            = to_tune(0, 1),
+    lambda.min.ratio = to_tune(1e-4, 1, logscale = TRUE)
+  ))
+
+
+glrn_S = GraphLearner$new(graph_S)
+
+at_S = AutoTuner$new(
+  learner    = glrn_S,
+  resampling = rsmp("cv", folds = 5),
+  measure    = msr("regr.mse"),
+  tuner      = tnr("random_search"),
+  terminator = trm("evals", n_evals = 5)
+)
+
+at_S$train(task_S)
+
+pred_S <- at_S$predict(task_S)
+
+pred_resp <- tibble::tibble(pred_S$response)
+
+
+
+autoplot(pred_S)
+autoplot(pred_S, type = "residual")
+pred_freq$confusion
+
 
 ```
 
