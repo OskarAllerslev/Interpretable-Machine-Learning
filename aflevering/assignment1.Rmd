@@ -56,75 +56,105 @@ We notice that there are multiple clusters, which indicate high correlation betw
 
 ```{r, echo = FALSE}
 
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
+
+data_trans <- function(data)
+{
+  
+  today <- Sys.Date()
+  
+  date_cols <- c("Date_start_contract", 
+                 "Date_last_renewal",
+                 "Date_next_renewal", 
+                 "Date_lapse")
+  data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
+       .SDcols = date_cols]
+  data[, Period_end :=
+         fifelse(
+           !is.na(Date_lapse) &
+             Date_lapse >= Date_last_renewal &            
+             Date_lapse <= Date_next_renewal,            
+           Date_lapse,
+           pmin(Date_next_renewal, today, na.rm = TRUE) 
+         )]
+  
+  
+  data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
+  data[, Exposure_days  := pmax(Exposure_days, 0)]      
+  data[, Exposure_unit  := fcase(
+    between(Exposure_days, 364, 367), 1,
+    default = Exposure_days/365.25
+  )]
+  
+  
+  key_vars <- c("ID","Year_matriculation","Power",
+                "Cylinder_capacity","N_doors","Type_fuel","Weight")
+  
+  agg <- data[, .(
+    Exposure               = sum(Exposure_unit),
+    Policies_in_force_max  = max(Policies_in_force),
+    Max_policies_max       = max(Max_policies),
+    Max_products_max       = max(Max_products),
+    Payment_max            = max(Payment),
+    # Premium_mean           = mean(Premium),
+    Cost_claims_year_sum   = sum(Cost_claims_year),
+    # N_claims_year_sum      = sum(N_claims_year),
+    # N_claims_history_sum   = sum(N_claims_history),
+    # R_claims_history_sum   = sum(R_Claims_history),
+    Type_risk_max          = max(Type_risk),
+    Value_vehicle_mean     = mean(Value_vehicle),
+    N_doors_mean           = mean(N_doors),
+    Length_sum             = sum(Length, na.rm = TRUE)
+  ), by = key_vars]
+  
+  
+  
+  
+  
+  agg <- agg %>% 
+    dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_year_sum > 0, 1, 0))
+  
+  tmp <- agg %>% 
+    dplyr::filter(is.na(Type_fuel))
+  NA_fuel_Y <- sum(tmp$Cost_claims_year_sum)
+  total_Y <- sum(agg$Cost_claims_year_sum)
+  
+  na_Y_ratio <- NA_fuel_Y / total_Y
+  
+  agg <- agg %>% 
+    dplyr::filter(!is.na(Type_fuel))
+  
+  agg <- agg %>%
+    dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
+  return(agg)
+
+}
 
 
-today <- Sys.Date()
+# data <- fread("Motor vehicle insurance data.csv", sep = ";")
+# 
+# X <- data[, -c("Cost_claims_year")]
+# y <- data$Cost_claims_year
+# 
+# train_idx <- sample(seq_along(y), 10000)
+# test_idx <- sample(setdiff(seq_along(y), train_idx), 10000)
+# 
+# train_X <- X[train_idx]
+# train_y <- y[train_idx]
+# test_X <- X[test_idx]
+# test_y <- y[test_idx]
 
-date_cols <- c("Date_start_contract", 
-               "Date_last_renewal",
-               "Date_next_renewal", 
-               "Date_lapse")
-data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
-     .SDcols = date_cols]
-data[, Period_end :=
-        fifelse(
-          !is.na(Date_lapse) &
-          Date_lapse >= Date_last_renewal &            
-          Date_lapse <= Date_next_renewal,            
-          Date_lapse,
-          pmin(Date_next_renewal, today, na.rm = TRUE) 
-        )]
+# vi skal gøre sådan her. 
+train_combined <- train_X %>% dplyr::mutate(Cost_claims_year = train_y)
 
+dat <- data_trans(train_combined)  
+  
 
-data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
-data[, Exposure_days  := pmax(Exposure_days, 0)]      
-data[, Exposure_unit  := fcase(
-        between(Exposure_days, 364, 367), 1,
-        default = Exposure_days/365.25
-)]
-
-
-key_vars <- c("ID","Year_matriculation","Power",
-              "Cylinder_capacity","N_doors","Type_fuel","Weight")
-
-agg <- data[, .(
-  Exposure               = sum(Exposure_unit),
-  Policies_in_force_max  = max(Policies_in_force),
-  Max_policies_max       = max(Max_policies),
-  Max_products_max       = max(Max_products),
-  Payment_max            = max(Payment),
-  Premium_mean           = mean(Premium),
-  Cost_claims_year_sum   = sum(Cost_claims_year),
-  N_claims_year_sum      = sum(N_claims_year),
-  N_claims_history_sum   = sum(N_claims_history),
-  R_claims_history_sum   = sum(R_Claims_history),
-  Type_risk_max          = max(Type_risk),
-  Value_vehicle_mean     = mean(Value_vehicle),
-  N_doors_mean           = mean(N_doors),
-  Length_sum             = sum(Length, na.rm = TRUE)
-), by = key_vars]
+ 
+# mice::md.pattern(dat, plot = TRUE)
 
 
 
-mice::md.pattern(agg, plot = TRUE)
-
-
-agg <- agg %>% 
-  dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_year_sum > 0, 1, 0))
-
-tmp <- agg %>% 
-  dplyr::filter(is.na(Type_fuel))
-NA_fuel_Y <- sum(tmp$Cost_claims_year_sum)
-total_Y <- sum(agg$Cost_claims_year_sum)
-
-na_Y_ratio <- NA_fuel_Y / total_Y
-# væk med lortet
-
-agg <- agg %>% 
-  dplyr::filter(!is.na(Type_fuel))
-     
-agg <- agg %>%
-  dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
 ```
 
 
@@ -143,6 +173,9 @@ ggplot2::ggplot(data = agg, ggplot2::aes(x = log(Cost_claims_year_sum))) +
 
 We almost, in a pratical sense 
 ```{r}
+
+
+
 task_frek <- as_task_classif(
   agg,
   target   = "claim_indicator",
