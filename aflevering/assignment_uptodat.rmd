@@ -259,7 +259,7 @@ data_trans <- function(data){
 
 
 
-```{r, echo = FALSE, results = FALSE, cache = TRUE}
+```{r, echo = FALSE, results = FALSE}
 data_twd <- data_trans(data)
 
 task_twd = as_task_regr(data_twd, target = "Cost_claim_this_year",
@@ -302,7 +302,7 @@ at_twd$archive
 
 
 ```
-
+##### Tweedie
 Initially we want to fit a Tweedie model on the entire data, since the Tweedie model is known for handeling zero-inflated distributions well. 
 We model with a gradient boosting machine, since we have a couple of parameters and the *lightgbm* provides a solid bias-variance trade-off.
 The additive structure of the gradient boosting is preferable over the random forest. 
@@ -331,7 +331,7 @@ par(mfrow = c(1,2))
 twd_p1
 twd_p2
 ```
-
+##### Split model
 
 
 
