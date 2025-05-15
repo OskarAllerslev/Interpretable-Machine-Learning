@@ -1,0 +1,343 @@
+
+
+```{r, echo = FALSE}
+
+knitr::opts_chunk$set(
+  echo   = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  dpi = 300,
+  fig.width = 6, fig.height = 4
+)
+```
+
+
+
+
+
+
+```{r, echo = FALSE, results = FALSE}
+library(patchwork)
+library(GGally)
+library(tweedie)
+library(mlr3extralearners)
+library(Hmisc)
+library(mice)
+library(mlr3)
+library(mlr3learners )
+library(mlr3tuning)
+library(mlr3mbo)
+library(glmnet)
+library(OpenML)
+library(mlr3pipelines)
+library(future)
+library(magrittr)
+library(data.table)
+library(tidyverse)
+library(corrr)
+library(corrplot)
+library(mlr3verse)
+```
+
+# Assignment 1 in interpretable machine learning
+We are tasked with building a predictive regression model, with the best possible prediction.
+This submission will be split up into several parts:
+
+- Initial data preprocessing and overview 
+- Introduction into the mathematics 
+- Modelling and justification 
+- Comparative discussion
+
+## Initial data preprocessing and overview
+
+The given data has the form:
+
+```{r, echo = FALSE}
+
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
+print(colnames(data))
+
+```
+We are asked to predict the **Cost_claims_year** given the rest of the covariate-vector.
+Initially it is important to note that out data is a classical insurance dataset, where we are given rows corresponding to insurance periode for a given contract. 
+There are several issues with this, since some contracts might overlap into multiple contracts, which can be identified by the ID. It is however very difficult to locate these policies, and we overlook this issue.
+
+There are numerous char. vectors in the data, which can be seen here:
+```{r, echo = FALSE}
+print(str(data))
+
+
+```
+One could, model some of the char. vectors like proposed in the lectures, by 
+$$
+\begin{align*}
+\int_Y y\ \kappa(x, dy) 
+\end{align*}
+$$
+where $\kappa$ is the appropriate probability kernel, and we let $y$ be our response.
+Due to simplicity this is not performed.
+
+Next there are some missing values. 
+```{r fig:mice, fig.cap = "Missingness plot, X axis on right shows rows where x is missing, and on the left the amount of rows where it is missing.", echo = FALSE,results=FALSE }
+
+print(table(is.na(data)))
+
+data_with_na <- data %>% 
+  dplyr::select(dplyr::where(~base::anyNA(.x)))
+
+
+
+```
+```{r, echo = FALSE}
+
+mice::md.pattern(data_with_na, plot = TRUE)
+```
+ 
+It becomes apparent that there are missing values in the *length* and *type_fuel* variable.
+We can see that the missingness is overlapping in $1764$ rows, but since the total missingness is substantial for the Length variable, we choose to impute these.
+We impute by drawing realizations from the empirical law of the *length* variable.
+We ignore type fuel since it is char.  
+
+
+```{r, echo = FALSE, result = FALSE}
+
+data <- data %>% 
+  dplyr::mutate(Length = Hmisc::impute(Length, fun = "random"))
+```
+
+
+Finally we look at the correlation between the covariates.
+```{r fig:correlation, fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
+
+num_data <- data %>% 
+  dplyr::select(-Date_start_contract,
+                -Date_last_renewal,
+                -Date_next_renewal,
+                -Date_birth,
+                -Distribution_channel,
+                -Date_lapse,
+                -Date_driving_licence,
+                -Type_fuel,
+                -Length)
+M <- stats::cor(num_data)
+corrplot::corrplot(M, order = 'AOE')
+
+```
+We notice some clusters, most meaningfull between *Cylinder_capacity*, *Value_vehicle* and *Weight* which is expected. We deem these to have significant predictive ability, and thus we choose to not remove these. 
+The top left cluster, will be ignored for now, since we will later introduce a data-transformation which affects this cluster in a high degree.
+
+
+##### Data Aggregation
+
+For our data aggregation we want to have the ability to assume independence, which we have if we aggregate the rows into being one policy. 
+So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain 
+$$
+\begin{align*}
+P\bigl(Z_i \in A,\; Z_k \in B\bigr)
+&= P\bigl(Z_i \in A\bigr)\,P\bigl(Z_k \in B\bigr), 
+\quad A, B \in \mathcal{B}(\mathcal{X}\times\mathcal{Y}).
+\end{align*}
+$$
+
+However this is an empirical assumption which can be violated by catastrophe events.
+
+The aggregating is done by formatting the date covariates such that we can calculate the contract exposure, where we note that one year means $E = 1$, and then sum over the entire *ID*. 
+Futher we take the premium, for the second to last entry, since we dont want to have forward-leakage in our data. The same is done for *cost_claims_history*, and related rows.
+We apply a mix of sum and max functions on the remaining rows to ensure that we aggregate data.
+
+
+
+
+## Introduction into the mathematical framework
+
+Here we desire some mathematics before we proceed. 
+It could be desireable to look at a classical insurance related result
+$$ 
+\begin{align*}
+E(S(t) \mid Z=z) &= E\left(\sum_{i=1}^{N(t)} X_i \mid Z = z \right)\\
+&= E\left( \left( \sum_{i=1}^{N(t)} X_i \mid Z = z \cap \mathcal{F}(t) \right)\right) \\
+&=E\left( N E\left( X_i \mid Z = z \right)  \mid Z=z\right) \\
+&= E(N \mid Z = z) E(X_1 \mid Z = z)
+\end{align*}
+$$
+Further we define the Tweedie law as 
+$$
+\begin{align*}
+P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\theta)}{\sigma^2} \right\}\nu_y(dz)
+\end{align*}
+$$
+since it can accommodate a zero-inflated distribution very well.
+
+
+## Modelling and justification
+
+```{r, echo = FALSE, result = FALSE}
+
+data_trans <- function(data){
+  
+  today <- Sys.Date()
+  
+  date_cols <- c("Date_start_contract", 
+                 "Date_last_renewal",
+                 "Date_next_renewal", 
+                 "Date_lapse")
+  data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
+       .SDcols = date_cols]
+  data[, Period_end :=
+         fifelse(
+           !is.na(Date_lapse) &
+             Date_lapse >= Date_last_renewal &            
+             Date_lapse <= Date_next_renewal,            
+           Date_lapse,
+           pmin(Date_next_renewal, today, na.rm = TRUE) 
+         )]
+  
+  
+  data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
+  data[, Exposure_days  := pmax(Exposure_days, 0)]      
+  data[, Exposure_unit  := fcase(
+    between(Exposure_days, 364, 367), 1,
+    default = Exposure_days/365.25
+  )]
+  
+
+#data[, Cost_claims_sum := sum(Cost_claims_year), by = ID]
+
+  # Add a column that flags the latest row per group
+  
+  setorder(data, ID, -Date_last_renewal)
+  data[, is_second_latest := FALSE]
+  data[, is_second_latest := .I == .I[2], by = ID]
+
+  key_vars <- c("ID","Year_matriculation","Power",
+                "Cylinder_capacity","N_doors","Type_fuel","Weight")
+  
+  agg <- data[, .(
+    Exposure               = sum(Exposure_unit),
+    Max_policies_max       = max(Max_policies),
+    Policies_in_force_second_latest = Policies_in_force[is_second_latest],
+
+    Max_products_max       = max(Max_products),
+    Payment_max            = max(Payment),
+    Premium_second_latest = Premium[is_second_latest],
+    Cost_claim_this_year = Cost_claims_year[which.max(Date_last_renewal)],
+    Cost_claims_sum_history = sum(Cost_claims_year) -(Cost_claims_year[which.max(Date_last_renewal)]),
+    R_claims_history   = max(N_claims_history - N_claims_year)/sum(Exposure_unit),
+    # N_claims_year_sum      = sum(N_claims_year),
+    N_claims_history   = max(N_claims_history - N_claims_year),
+    # R_claims_history_sum   = sum(R_Claims_history),
+    Type_risk_max          = max(Type_risk),
+    Value_vehicle_mean     = mean(Value_vehicle),
+    N_doors_mean           = mean(N_doors),
+    Length_sum             = sum(Length, na.rm = TRUE)
+  ), by = key_vars]
+  
+  
+  
+  
+  
+  agg <- agg %>% 
+    dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
+  
+  tmp <- agg %>%
+    dplyr::filter(is.na(Type_fuel))
+
+  NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
+  total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
+
+  na_Y_ratio <- NA_fuel_Y / total_Y
+  
+  agg <- agg %>% 
+    dplyr::filter(!is.na(Type_fuel))
+  
+  agg <- agg %>%
+    dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
+  return(agg)
+}
+```
+
+
+
+```{r, echo = FALSE, results = FALSE, cache = TRUE}
+data_twd <- data_trans(data)
+
+task_twd = as_task_regr(data_twd, target = "Cost_claim_this_year",
+                        id = "tweedie")
+
+
+
+graph_twd = po("encode") %>>%
+  po("scale") %>>%
+  po("learner", lrn("regr.lightgbm",
+    objective              = "tweedie",
+    tweedie_variance_power = to_tune(1, 1.9),
+    learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
+    num_leaves             = to_tune(16L, 64L),
+
+    num_iterations         = to_tune(200L, 1000L)
+
+  ))
+
+glrn_twd = GraphLearner$new(graph_twd, id = "tweedie_lgbm")
+resampling = rsmp("cv", folds = 5)
+tuner = tnr("random_search")
+terminator = trm("evals", n_evals = 5)
+measure = msr("regr.mse")
+
+
+
+at_twd = AutoTuner$new(
+  learner    = glrn_twd,
+  resampling = resampling,
+  measure    = measure,
+  terminator = terminator,
+  tuner      = tuner
+)
+
+at_twd$train(task_twd)
+
+
+at_twd$archive
+
+
+```
+
+Initially we want to fit a Tweedie model on the entire data, since the Tweedie model is known for handeling zero-inflated distributions well. 
+We model with a gradient boosting machine, since we have a couple of parameters and the *lightgbm* provides a solid bias-variance trade-off.
+The additive structure of the gradient boosting is preferable over the random forest. 
+We minimize the mse, and find that the optimal variance power through cross-validation is approximately $1.82$. This makes the tweedie a compound Poisson-Gamma. This optimal model is found with $19$ leaves. 
+
+The random search is not optimal, and one could have used a better optimization algorithm.
+We can look at the model fit, on the whole dataset.
+
+```{r fig:twd_plots, fig.cap= "Residual plot, histogram for residuals, QQ-plot", echo = FALSE}
+
+twd_p1 <- mlr3verse::autoplot(at_twd$predict(task_twd), type = "residual")
+twd_p2 <- mlr3verse::autoplot(at_twd$predict(task_twd), type = "histogram")
+
+plot_twd_dat <- tibble::tibble(
+resp = at_twd$predict(task_twd)$response,
+truth = at_twd$predict(task_twd)$truth
+)
+
+
+
+twd_p3 <- qqplot(x = plot_twd_dat$resp, y = plot_twd_dat$truth)
+abline(a = 0,b = 1)
+
+
+par(mfrow = c(1,2))
+twd_p1
+twd_p2
+```
+
+
+
+
+
+## Comparative discussion
+
+
+
+
