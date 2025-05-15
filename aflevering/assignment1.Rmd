@@ -330,17 +330,6 @@ freq_predict <- at_freq$predict_newdata(data_agg %>% dplyr::select(-claim_indica
 
 skade_predict <- at_S$predict_newdata(data_agg %>% dplyr::select(-Cost_claim_this_year))
 
-plot_df <- tibble::tibble(
-  Y= data_agg$Cost_claim_this_year,
-  Y_hat = skade_predict$response 
-  
-)
-
-hist(as.numeric(plot_df$Y))
-
-
-
-
 a <- freq_predict$prob[, 1]
 b <- skade_predict$response
 
@@ -352,6 +341,12 @@ dt <- dt %>%
   dplyr::mutate(predicted = freq * skade)
 
 mse <- mean((dt$predicted - data_agg$Cost_claim_this_year)^2)
+
+
+qqplot(dt$predicted, data_agg$Cost_claim_this_year)
+qqline(b = 1)
+
+
 
 
 merged_data <- dplyr::left_join(pred_freq_vec, pred_skade_vec, by = "ID")
