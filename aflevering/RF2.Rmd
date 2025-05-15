@@ -1,0 +1,183 @@
+---
+title: "RF2"
+author: "Jakob Kehlet"
+date: "2025-05-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(mice)
+library(mlr3)
+library(ranger)
+library(mlr3learners )
+library(mlr3tuning)
+library(mlr3mbo)
+library(glmnet)
+library(OpenML)
+library(mlr3pipelines)
+library(future)
+library(magrittr)
+library(data.table)
+library(tidyverse)
+library(corrr)
+library(corrplot)
+library(mlr3verse)
+library(lubridate)
+library(caret)
+
+# Load data
+df <- read.csv("Motor vehicle insurance data.csv", sep = ";")
+
+# Convert dates
+df <- df %>%
+  mutate(
+    Date_start_contract = dmy(Date_start_contract),
+    Date_birth = dmy(Date_birth),
+    Date_driving_licence = dmy(Date_driving_licence)
+  )
+
+# Calculate features before dropping leakage
+df <- df %>%
+  mutate(
+    Past_claims = N_claims_history - N_claims_year
+  )
+
+# Drop leakage columns
+df <- df %>%
+  select(-c(Cost_claims_year, N_claims_year, N_claims_history, 
+            R_Claims_history, Lapse, Date_lapse, 
+            Date_last_renewal, Date_next_renewal))
+
+# Feature engineering
+df <- df %>%
+  mutate(
+    Age_at_contract = as.numeric(difftime(Date_start_contract, Date_birth, units = "days")) / 365.25,
+    Driving_experience = as.numeric(difftime(Date_start_contract, Date_driving_licence, units = "days")) / 365.25,
+    Contract_month = month(Date_start_contract, label = TRUE)
+  ) %>%
+  select(-Date_start_contract, -Date_birth, -Date_driving_licence)
+
+# Impute missing values
+df$Type_fuel[is.na(df$Type_fuel)] <- "Missing"
+df$Length[is.na(df$Length)] <- -1
+
+# Convert character vars to factor
+df <- df %>% mutate(across(where(is.character), as.factor))
+
+# Convert categorical numerics to factors
+cat_cols <- c("Distribution_channel", "Second_driver", "Type_risk", "Area", "N_doors")
+df[cat_cols] <- lapply(df[cat_cols], as.factor)
+
+# Reload target
+df$Cost_claims_year <- read.csv("Motor vehicle insurance data.csv", sep = ";")$Cost_claims_year
+
+```
+
+```{r}
+
+task_x  <- as_task_regr(
+  x = df,
+  target = "Cost_claims_year",
+  id = "newdata"
+)
+
+```
+
+
+```{r}
+learner_full <- lrn("regr.rpart", predict_type = "response")
+learner_full$train(task_x)
+
+# Visualize the tree
+tree_model <- learner_full$model
+plot(tree_model, compress = TRUE, margin = 0.1)
+text(tree_model, use.n = TRUE, cex = 0.8)
+
+```
+```{r}
+# Pipeline for numeric-only selection
+select_num <- po("select", selector = selector_type(c("numeric", "integer")))
+
+# XGBoost with hyperparameter tuning
+xgb_graph <- select_num %>>% 
+  lrn("regr.xgboost", id = "xgboost",
+      nrounds = to_tune(10, 100),
+      max_depth = to_tune(1, 10),
+      eta = to_tune(0.01, 0.1)
+  )
+
+xgb_learner <- GraphLearner$new(xgb_graph)
+
+xgb_tuned <- auto_tuner(
+  learner = xgb_learner,
+  resampling = rsmp("cv", folds = 5),
+  measure = msr("regr.mse"),
+  tuner = tnr("grid_search"),
+  terminator = trm("evals", n_evals = 10),
+  id = "xgboost_tuned"
+)
+```
+
+
+```{r}
+
+
+
+learners <- list(
+  lrn("regr.featureless", id = "featureless"),
+  lrn("regr.rpart", predict_type = "response", id = "rpart_unpruned"),
+
+  auto_tuner(
+    lrn("regr.ranger", id = "ranger"),
+    resampling = rsmp("holdout"),
+    measure = msr("regr.mse"),
+    search_space = ps(
+      mtry.ratio = p_dbl(0.1, 0.5),
+      min.node.size = p_int(1, 10)
+    ),
+    terminator = trm("evals", n_evals = 20),
+    tuner = tnr("random_search"),
+    id = "ranger_tuned"
+  ), 
+  xgb_tuned  
+)
+
+
+```
+
+
+```{r}
+n <- task_x$nrow
+
+# Sample 10% of the data (i.e., shrink by factor 10)
+set.seed(42)  # for reproducibility
+small_idx <- sample(n, size = floor(n / 10))
+
+# Subset the task
+task_x_small <- task_x$filter(small_idx)
+```
+
+
+```{r}
+resampling <- rsmp("cv", folds = 2)
+
+design <- benchmark_grid(task_x, learners, resampling)
+
+bmr <- benchmark(design)
+
+# Aggregate metrics
+bmr$aggregate(list(
+  msr("regr.mse"),
+  msr("regr.rmse"),
+  msr("regr.mae"),
+  msr("regr.rsq"),
+  msr("regr.mape")
+))
+
+```
+
+# MAPE	19.56%

@@ -26,6 +26,8 @@ library(mlr3verse)
 ```{r, echo = FALSE}
 
 data <- fread("Motor vehicle insurance data.csv", sep = ";")
+data
+
 ```
 
 # Looking at the data
@@ -85,20 +87,31 @@ data_trans <- function(data){
     default = Exposure_days/365.25
   )]
   
+
+#data[, Cost_claims_sum := sum(Cost_claims_year), by = ID]
+
+  # Add a column that flags the latest row per group
   
+  setorder(data, ID, -Date_last_renewal)
+  data[, is_second_latest := FALSE]
+  data[, is_second_latest := .I == .I[2], by = ID]
+
   key_vars <- c("ID","Year_matriculation","Power",
                 "Cylinder_capacity","N_doors","Type_fuel","Weight")
   
   agg <- data[, .(
     Exposure               = sum(Exposure_unit),
-    Policies_in_force_max  = max(Policies_in_force),
     Max_policies_max       = max(Max_policies),
+    Policies_in_force_second_latest = Policies_in_force[is_second_latest],
+
     Max_products_max       = max(Max_products),
     Payment_max            = max(Payment),
-    # Premium_mean           = mean(Premium),
-    Cost_claims_year_sum   = sum(Cost_claims_year),
+    Premium_second_latest = Premium[is_second_latest],
+    Cost_claim_this_year = Cost_claims_year[which.max(Date_last_renewal)],
+    Cost_claims_sum_history = sum(Cost_claims_year) -(Cost_claims_year[which.max(Date_last_renewal)]),
+    R_claims_history   = max(N_claims_history - N_claims_year)/sum(Exposure_unit),
     # N_claims_year_sum      = sum(N_claims_year),
-    # N_claims_history_sum   = sum(N_claims_history),
+    N_claims_history   = max(N_claims_history - N_claims_year),
     # R_claims_history_sum   = sum(R_Claims_history),
     Type_risk_max          = max(Type_risk),
     Value_vehicle_mean     = mean(Value_vehicle),
@@ -111,13 +124,14 @@ data_trans <- function(data){
   
   
   agg <- agg %>% 
-    dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_year_sum > 0, 1, 0))
+    dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
   
-  tmp <- agg %>% 
+  tmp <- agg %>%
     dplyr::filter(is.na(Type_fuel))
-  NA_fuel_Y <- sum(tmp$Cost_claims_year_sum)
-  total_Y <- sum(agg$Cost_claims_year_sum)
-  
+
+  NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
+  total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
+
   na_Y_ratio <- NA_fuel_Y / total_Y
   
   agg <- agg %>% 
@@ -128,157 +142,26 @@ data_trans <- function(data){
   return(agg)
 }
 
-
-# data <- fread("Motor vehicle insurance data.csv", sep = ";")
-# 
-# X <- data[, -c("Cost_claims_year")]
-# y <- data$Cost_claims_year
-# 
-# train_idx <- sample(seq_along(y), 10000)
-# test_idx <- sample(setdiff(seq_along(y), train_idx), 10000)
-# 
-# train_X <- X[train_idx]
-# train_y <- y[train_idx]
-# test_X <- X[test_idx]
-# test_y <- y[test_idx]
-
-# vi skal gøre sådan her. 
-train_combined <- train_X %>% dplyr::mutate(Cost_claims_year = train_y)
-
-dat <- data_trans(train_combined)  
-  
-
  
 # mice::md.pattern(dat, plot = TRUE)
 
+agg = data_trans(data)
 
 
 ```
 
-
-
-
-```{r}
-
-ggplot2::ggplot(data = agg, ggplot2::aes(x = log(Cost_claims_year_sum))) +
-  ggplot2::geom_density()
-
-
-
-
-```
-
-```{r}
-# tweedie
-library(mlr3learners)
-library(lightgbm)
-library(mlr3extralearners)
-
-task_twd = as_task_regr(agg, target = "Cost_claims_year_sum", 
-                        id = "tweedie")
-
-
-graph_twd = po("encode") %>>%
-  po("scale") %>>%
-  po("learner", lrn("regr.lightgbm",
-    objective              = "tweedie",
-    tweedie_variance_power = to_tune(1.1, 1.9),
-    learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
-    num_leaves             = to_tune(16L, 128L),
-
-    num_iterations         = to_tune(200L, 1000L)
-
-  ))
-
-glrn_twd = GraphLearner$new(graph_twd, id = "tweedie_lgbm")
-resampling = rsmp("cv", folds = 5)
-tuner = tnr("random_search")
-terminator = trm("evals", n_evals = 5)
-measure = msr("regr.mae")
-
-
-at = AutoTuner$new(
-  learner    = glrn_twd,
-  resampling = resampling,
-  measure    = measure,
-  terminator = terminator,
-  tuner      = tuner
-)
-
-at$train(task_twd)
-
-# simuler det der vil være i testen 
-train_combined <- train_X %>% dplyr::mutate(Cost_claims_year = train_y)
-
-dat <- data_trans(train_combined)  
-
-task_x  <- as_task_regr(
-  x = dat,
-  target = "Cost_claims_year_sum",
-  id = "newdata"
-)
-
-
-pred_x = at$predict(task_twd)
-dat <- agg
-
-# 1) Performance‐mål
-mse  <- mean((pred_x$response - dat$Cost_claims_year_sum)^2)
-rmse <- sqrt(mse)
-mae  <- mean(abs(pred_x$response - dat$Cost_claims_year_sum))
-r2   <- cor(pred_x$response, dat$Cost_claims_year_sum)^2
-rmsle<- sqrt(mean((log1p(pred_x$response) - log1p(dat$Cost_claims_year_sum))^2))
-             
-cat("MSE: ",  mse,  "\n")
-cat("RMSE:", rmse, "\n")
-cat("MAE: ",  mae,  "\n")
-cat("R²:  ",  r2,   "\n")
-cat("rmsle:  ",  rmsle,   "\n")
-
-
-ggplot(data = data.frame(
-         obs  = log(dat$Cost_claims_year_sum+1),
-         pred = log(pred_x$response+1)
-       ),
-       aes(x = pred, y = obs)
-) +
-  geom_point(alpha = 0.4) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  labs(x = "Forudsagt", y = "Observeret",
-       title = "Predicted vs Observed")
-
-resid = dat$Cost_claims_year_sum - pred_x$response
-
-# a) Histogram af residualer
-ggplot(data.frame(resid = resid), aes(x = resid)) +
-  geom_histogram(bins = 30, fill = "steelblue", alpha = 0.6) +
-  labs(x = "Residual", title = "Histogram af residualer")
-
-# b) QQ‐plot for at tjekke normalitet
-ggplot(data.frame(resid = resid), aes(sample = resid)) +
-  stat_qq() +
-  stat_qq_line() +
-  labs(title = "QQ‐plot af residualer")
-
-# c) Residual vs forudsagt for at tjekke heteroskedasticitet
-ggplot(data.frame(pred = pred_x$response, resid = resid),
-       aes(x = pred, y = resid)
-) +
-  geom_point(alpha = 0.4) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(x = "Forudsagt", y = "Residual",
-       title = "Residual vs Predicted")
-
-```
 
 
 We almost, in a pratical sense 
 ```{r}
+
+#Frekvensmodel
+
 data <- fread("Motor vehicle insurance data.csv", sep = ";")
 
 data_F <- data_trans(data)
 
-data_F <- data_F %>% dplyr::select(-Cost_claims_year_sum)
+data_F <- data_F %>% dplyr::select(-Cost_claim_this_year)
 
 
 task_freq = as_task_classif(
@@ -295,18 +178,18 @@ graph_freq  = po("encode") %>>%
             po("scale")  %>>%
             lrn("classif.xgboost",
                  predict_type = "prob",
-                 eval_metric  = "logloss",
+                 eval_metric  = "logloss", #Bedre loss funktion?
                  nrounds      = to_tune(200, 800),
                  max_depth    = to_tune(3, 7),
                  eta          = to_tune(0.01, 0.3),
                  subsample    = to_tune(0.6, 1))
 
 at_freq = auto_tuner(
-  learner    = as_learner(graph_bin),
-  resampling = rsmp("cv", folds = 5),
+  learner    = as_learner(graph_freq),
+  resampling = rsmp("cv", folds = 2), #ÆNDRET 5 -> 2
   measure    = msr("classif.bbrier"),
   tuner      = tnr("random_search"),
-  term_evals = 5 
+  term_evals = 2 #Ændret 5 til 1
 )
 
 
@@ -317,11 +200,29 @@ pred_freq <- at_freq$predict(task_freq)
 
 pred_freq_vec <- tibble::tibble(prob = pred_freq$prob[,1])
 pred_freq_vec <- pred_freq_vec %>% dplyr::mutate(Y = dplyr::if_else(prob> 0.5, 1 , 0)) 
-
+pred_freq_vec <- pred_freq_vec %>%  dplyr::mutate(ID = data_F$ID)
 
 autoplot(pred_freq)
 autoplot(pred_freq, type = "roc")
 pred_freq$confusion
+
+```
+
+```{r}
+# Load the necessary library
+library(ggplot2)
+
+# Plot the distribution of the response variable
+ggplot(data_S, aes(x = log(Cost_claims_year_sum))) +
+  geom_histogram(binwidth = 0.1, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(
+    title = "Distribution of Cost_claims_year_sum",
+    x = "Cost_claims_year_sum",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+
 
 
 ```
@@ -331,59 +232,113 @@ pred_freq$confusion
 
 ```{r}
 
+#Skademodel
+
 data <- fread("Motor vehicle insurance data.csv", sep = ";")
 data_S <- data_trans(data)
 
-data_S <- data_F %>% dplyr::select(-claim_indicator)
-data_S <- data_S %>% dplyr::filter(Cost_claims_year_sum > 0)
 
 
+# num_data <- data %>%
+#   dplyr::select(-Date_start_contract,
+#                 -Date_last_renewal,
+#                 -Date_next_renewal,
+#                 -Date_birth,
+#                 -Distribution_channel,
+#                 -Date_lapse,
+#                 -Date_driving_licence,
+#                 -Type_fuel,
+#                 -Length,
+#                 -Period_end)
+
+data_S <- data_S %>%
+  arrange(desc(Cost_claims_sum_history)) %>%
+  slice(-1:-5)  # Remove the top 5 rows
+
+data_S <- data_S %>%
+  arrange(desc(Cost_claim_this_year)) %>%
+  slice(-1:-5) 
+
+
+data_S <- data_S %>% dplyr::select(-claim_indicator)
+data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
+
+#num_data <- num_data %>% dplyr::filter(Cost_claims_year > 0)
 
 task_S = as_task_regr(
   data_S,
-  target = "Cost_claims_year_sum",
+  target = "Cost_claim_this_year",
   weights = data_S$Exposure,
   id     = "skade"
 )
 
+
 task_S$set_col_roles("Exposure", "weight")
 
-
-graph_S = po("encode") %>>%
-  po("scale") %>>%
-  po("learner", lrn("regr.cv_glmnet",
-    family           = "gaussian",
-    alpha            = to_tune(0, 1),
-    lambda.min.ratio = to_tune(1e-4, 1, logscale = TRUE)
-  ))
-
+# 
+# graph_S = po("encode") %>>%
+#   po("scale") %>>%
+#   po("learner", lrn("regr.cv_glmnet",
+#     family           = "gaussian",
+#     alpha            = to_tune(0, 1),
+#     lambda.min.ratio = to_tune(1e-4, 1, logscale = TRUE)
+#   ))
+# 
+  graph_S = po("encode") %>>%
+  #po("scale") %>>%
+  po("learner", lrn("regr.ranger"))
 
 glrn_S = GraphLearner$new(graph_S)
 
 at_S = AutoTuner$new(
   learner    = glrn_S,
-  resampling = rsmp("cv", folds = 5),
+  resampling = rsmp("cv", folds = 5),  #ÆNDRET 5 -> 2
   measure    = msr("regr.mse"),
   tuner      = tnr("random_search"),
-  terminator = trm("evals", n_evals = 5)
+  terminator = trm("evals", n_evals = 5)  #ÆNDRET 5 -> 1
 )
 
 at_S$train(task_S)
 
 pred_S <- at_S$predict(task_S)
 
-pred_resp <- tibble::tibble(pred_S$response)
-
-
+pred_skade_vec <- tibble::tibble(pred_resp = pred_S$response)
+pred_skade_vec <- pred_skade_vec %>%  dplyr::mutate(ID = data_S$ID)
 
 autoplot(pred_S)
 autoplot(pred_S, type = "residual")
-pred_freq$confusion
-
 
 ```
 
 
+```{r}
+#Kombineret model
+
+ 
+# Frekvens alt grupperet data, 52.645 rækker
+
+# Skade, grupperet data, men claim_size > 0 = 5.902 rækker
+
+#E[F] * E[Y]
+
+data_agg <- data_trans(data)
+
+merged_data <- dplyr::left_join(pred_freq_vec, pred_skade_vec, by = "ID")
+
+merged_data <- merged_data %>%
+  dplyr::mutate(
+    prob = coalesce(prob, 0),         # Replace NA in 'prob' with 0
+    pred_resp = coalesce(pred_resp, 0) # Replace NA in 'pred_resp' with 0
+  )
+
+#Er preds ordered efter ID?
+
+mse_AB <- mean(((merged_data$prob* merged_data$pred_resp) - data_agg$Cost_claim_this_year)^2)
+mse_AB
+
+
+
+```
 
 
 

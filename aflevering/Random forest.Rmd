@@ -1,0 +1,222 @@
+---
+title: "Project1 RF"
+author: "Jakob Kehlet"
+date: "2025-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(mice)
+library(mlr3)
+library(mlr3learners )
+library(mlr3tuning)
+library(mlr3mbo)
+library(glmnet)
+library(OpenML)
+library(mlr3pipelines)
+library(future)
+library(magrittr)
+library(data.table)
+library(tidyverse)
+library(corrr)
+library(corrplot)
+library(mlr3verse)
+
+future::plan("multisession")
+
+```
+
+
+
+```{r}
+
+data_trans <- function(data)
+{
+  
+  today <- Sys.Date()
+  
+  date_cols <- c("Date_start_contract", 
+                 "Date_last_renewal",
+                 "Date_next_renewal", 
+                 "Date_lapse")
+  data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
+       .SDcols = date_cols]
+  data[, Period_end :=
+         fifelse(
+           !is.na(Date_lapse) &
+             Date_lapse >= Date_last_renewal &            
+             Date_lapse <= Date_next_renewal,            
+           Date_lapse,
+           pmin(Date_next_renewal, today, na.rm = TRUE) 
+         )]
+  
+  
+  data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
+  data[, Exposure_days  := pmax(Exposure_days, 0)]      
+  data[, Exposure_unit  := fcase(
+    between(Exposure_days, 364, 367), 1,
+    default = Exposure_days/365.25
+  )]
+  
+  
+  key_vars <- c("ID","Year_matriculation","Power",
+                "Cylinder_capacity","N_doors","Type_fuel","Weight")
+  
+  agg <- data[, .(
+    Exposure               = sum(Exposure_unit),
+    Policies_in_force_max  = max(Policies_in_force),
+    Max_policies_max       = max(Max_policies),
+    Max_products_max       = max(Max_products),
+    Payment_max            = max(Payment),
+    # Premium_mean           = mean(Premium),
+    Cost_claims_year_sum   = sum(Cost_claims_year),
+    # N_claims_year_sum      = sum(N_claims_year),
+    # N_claims_history_sum   = sum(N_claims_history),
+    # R_claims_history_sum   = sum(R_Claims_history),
+    Type_risk_max          = max(Type_risk),
+    Value_vehicle_mean     = mean(Value_vehicle),
+    N_doors_mean           = mean(N_doors),
+    Length_sum             = sum(Length, na.rm = TRUE)
+  ), by = key_vars]
+  
+  
+  
+  
+  
+  agg <- agg %>% 
+    dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_year_sum > 0, 1, 0))
+  
+  tmp <- agg %>% 
+    dplyr::filter(is.na(Type_fuel))
+  NA_fuel_Y <- sum(tmp$Cost_claims_year_sum)
+  total_Y <- sum(agg$Cost_claims_year_sum)
+  
+  na_Y_ratio <- NA_fuel_Y / total_Y
+  
+  agg <- agg %>% 
+    dplyr::filter(!is.na(Type_fuel))
+  
+  agg <- agg %>%
+    dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
+  return(agg)
+
+}
+```
+
+
+
+```{r}
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
+
+  X <- data[, -c("Cost_claims_year")]
+  y <- data$Cost_claims_year
+
+```
+
+```{r}
+
+dat <- data_trans(data)
+
+task_x  <- as_task_regr(
+  x = dat,
+  target = "Cost_claims_year_sum",
+  id = "newdata"
+)
+
+```
+
+
+```{r}
+learner_full <- lrn("regr.rpart", predict_type = "response")
+learner_full$train(task_x)
+
+# Visualize the tree
+tree_model <- learner_full$model
+plot(tree_model, compress = TRUE, margin = 0.1)
+text(tree_model, use.n = TRUE, cex = 0.8)
+
+```
+
+```{r}
+learner_cv <- lrn("regr.rpart", xval = 5, predict_type = "response")
+learner_cv$train(task_x)
+
+# Plot cross-validated error vs complexity parameter
+rpart::plotcp(learner_cv$model)
+rpart::printcp(learner_cv$model)
+
+```
+
+
+```{r}
+cp_table <- as.data.frame(learner_cv$model$cptable)
+min_error <- min(cp_table$xerror)
+best_cp <- cp_table[cp_table$xerror <= min_error + cp_table$xstd[which.min(cp_table$xerror)], ][1, "CP"]
+
+# Train pruned tree with chosen cp
+learner_pruned <- lrn("regr.rpart", cp = best_cp, predict_type = "response")
+learner_pruned$train(task_x)
+
+# Plot the pruned tree
+plot(learner_pruned$model, compress = TRUE, margin = 0.1)
+text(learner_pruned$model, use.n = TRUE, cex = 0.8)
+
+```
+
+```{r}
+learners <- list(
+  lrn("regr.featureless", id = "featureless"),
+  lrn("regr.rpart", predict_type = "response", id = "rpart_unpruned"),
+  lrn("regr.rpart", cp = best_cp, predict_type = "response", id = "rpart_pruned"),
+  
+  auto_tuner(
+    lrn("regr.xgboost", nthread = 1, id = "xgboost"),
+    resampling = rsmp("holdout"),
+    measure = msr("regr.mse"),
+    search_space = ps(
+      eta = p_dbl(0.01, 0.3),
+      nrounds = p_int(100, 500),
+      max_depth = p_int(1, 10)
+    ),
+    terminator = trm("evals", n_evals = 20),
+    tuner = tnr("random_search"),
+    id = "xgboost_tuned"
+  ),
+
+  auto_tuner(
+    lrn("regr.ranger", id = "ranger"),
+    resampling = rsmp("holdout"),
+    measure = msr("regr.mse"),
+    search_space = ps(
+      mtry.ratio = p_dbl(0.1, 1),
+      min.node.size = p_int(1, 50)
+    ),
+    terminator = trm("evals", n_evals = 20),
+    tuner = tnr("random_search"),
+    id = "ranger_tuned"
+  )
+)
+
+
+```
+
+```{r}
+resampling <- rsmp("cv", folds = 5)
+design <- benchmark_grid(task_x, learners, resampling)
+
+bmr <- benchmark(design)
+
+# Aggregate metrics
+bmr$aggregate(list(
+  msr("regr.mse"),
+  msr("regr.rmse"),
+  msr("regr.mae"),
+  msr("regr.rsq")
+))
+
+```
+
