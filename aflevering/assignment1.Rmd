@@ -213,14 +213,14 @@ pred_freq$confusion
 library(ggplot2)
 
 # Plot the distribution of the response variable
-ggplot(data_S, aes(x = log(Cost_claims_year_sum))) +
-  geom_histogram(binwidth = 0.1, fill = "skyblue", color = "black", alpha = 0.7) +
-  labs(
-    title = "Distribution of Cost_claims_year_sum",
-    x = "Cost_claims_year_sum",
-    y = "Frequency"
-  ) +
-  theme_minimal()
+# ggplot(data_F, aes(x = log(Cost_claim_this_year))) +
+#   geom_histogram(binwidth = 0.1, fill = "skyblue", color = "black", alpha = 0.7) +
+#   labs(
+#     title = "Distribution of Cost_claims_year_sum",
+#     x = "Cost_claims_year_sum",
+#     y = "Frequency"
+#   ) +
+#   theme_minimal()
 
 
 
@@ -251,13 +251,13 @@ data_S <- data_trans(data)
 #                 -Length,
 #                 -Period_end)
 
-data_S <- data_S %>%
-  arrange(desc(Cost_claims_sum_history)) %>%
-  slice(-1:-5)  # Remove the top 5 rows
+# data_S <- data_S %>%
+#   arrange(desc(Cost_claims_sum_history)) %>%
+#   slice(-1:-5)  # Remove the top 5 rows
 
-data_S <- data_S %>%
-  arrange(desc(Cost_claim_this_year)) %>%
-  slice(-1:-5) 
+# data_S <- data_S %>%
+#   arrange(desc(Cost_claim_this_year)) %>%
+#   slice(-1:-5) 
 
 
 data_S <- data_S %>% dplyr::select(-claim_indicator)
@@ -284,7 +284,8 @@ task_S$set_col_roles("Exposure", "weight")
 #     lambda.min.ratio = to_tune(1e-4, 1, logscale = TRUE)
 #   ))
 # 
-  graph_S = po("encode") %>>%
+
+graph_S = po("encode") %>>%
   #po("scale") %>>%
   po("learner", lrn("regr.ranger"))
 
@@ -292,15 +293,17 @@ glrn_S = GraphLearner$new(graph_S)
 
 at_S = AutoTuner$new(
   learner    = glrn_S,
-  resampling = rsmp("cv", folds = 5),  #ÆNDRET 5 -> 2
+  resampling = rsmp("cv", folds = 2),  #ÆNDRET 5 -> 2
   measure    = msr("regr.mse"),
   tuner      = tnr("random_search"),
-  terminator = trm("evals", n_evals = 5)  #ÆNDRET 5 -> 1
+  terminator = trm("evals", n_evals = 2)  #ÆNDRET 5 -> 1
 )
 
 at_S$train(task_S)
 
 pred_S <- at_S$predict(task_S)
+
+
 
 pred_skade_vec <- tibble::tibble(pred_resp = pred_S$response)
 pred_skade_vec <- pred_skade_vec %>%  dplyr::mutate(ID = data_S$ID)
@@ -322,6 +325,34 @@ autoplot(pred_S, type = "residual")
 #E[F] * E[Y]
 
 data_agg <- data_trans(data)
+
+freq_predict <- at_freq$predict_newdata(data_agg %>% dplyr::select(-claim_indicator))
+
+skade_predict <- at_S$predict_newdata(data_agg %>% dplyr::select(-Cost_claim_this_year))
+
+plot_df <- tibble::tibble(
+  Y= data_agg$Cost_claim_this_year,
+  Y_hat = skade_predict$response 
+  
+)
+
+hist(as.numeric(plot_df$Y))
+
+
+
+
+a <- freq_predict$prob[, 1]
+b <- skade_predict$response
+
+dt <- tibble::tibble(
+  freq = a, 
+  skade = b
+)
+dt <- dt %>% 
+  dplyr::mutate(predicted = freq * skade)
+
+mse <- mean((dt$predicted - data_agg$Cost_claim_this_year)^2)
+
 
 merged_data <- dplyr::left_join(pred_freq_vec, pred_skade_vec, by = "ID")
 
