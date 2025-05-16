@@ -1,0 +1,20 @@
+
+---
+title: "show-all-code demo"
+output: html_document
+---
+
+```{r}
+print(2+2)
+```
+
+```{r}
+rmd <- knitr::opts_knit$get("input.file") %||% knitr::current_input()
+stopifnot(!is.null(rmd) && nzchar(rmd))
+tmp <- knitr::purl(input = rmd,
+                   output = tempfile(fileext = ".R"),
+                   documentation = 0, quiet = TRUE)
+code_lines <- readLines(tmp, warn = FALSE, encoding = "UTF-8")
+cat("```r\n", paste(code_lines, collapse = "\n"), "\n```")
+```
+

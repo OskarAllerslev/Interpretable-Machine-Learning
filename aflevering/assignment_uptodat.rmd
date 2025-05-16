@@ -1,5 +1,4 @@
 
-
 ```{r, echo = FALSE}
 
 knitr::opts_chunk$set(
@@ -11,6 +10,168 @@ knitr::opts_chunk$set(
   fig.width = 6, fig.height = 4
 )
 ```
+
+
+
+```{r, echo = FALSE, results=FALSE }
+  train_severity <- function(data, folds, n_evals){
+    data <- data %>% dplyr::select(-claim_indicator)
+    data <- data %>% dplyr::filter(Cost_claim_this_year > 0)
+    
+    task_S = as_task_regr(
+      data,
+      target = "Cost_claim_this_year",
+      weights = data$Exposure,
+      id     = "skade"
+    )
+    
+    task_S$set_col_roles("Exposure", "weight")
+    
+    graph_S <- po("imputeoor") %>>%
+      po("encode")    %>>%
+      po("scale")     %>>%
+      po("learner",
+         lrn("regr.lightgbm",
+             objective       = "quantile",
+             alpha           = 0.85      
+         ))
+
+    
+    glrn_S = GraphLearner$new(graph_S)
+    
+    at_severity = AutoTuner$new(
+      learner    = glrn_S,
+      resampling = rsmp("cv", folds = folds),  
+      measure    = msr("regr.mse"),
+      tuner      = tnr("random_search"),
+      terminator = trm("evals", n_evals = n_evals)  
+    )
+    
+    
+    at_severity <- at_severity$train(task_S)
+    return(at_severity) 
+  }
+
+  train_freq <- function(data, folds, n_evals){
+    
+    data <- data %>% dplyr::select(-Cost_claim_this_year)
+    
+    task_freq = as_task_classif(
+      data,
+      target = "claim_indicator",
+      positive = "1",
+      weights = data$Exposure,
+      id     = "frek_binary"
+    )
+  task_freq$set_col_roles("Exposure", "weight")
+  
+  graph_freq  = po("encode") %>>%
+    po("scale")  %>>%
+    lrn("classif.xgboost",
+        predict_type = "prob",
+        eval_metric  = "logloss", #Bedre loss funktion?
+        nrounds      = to_tune(200, 800),
+        max_depth    = to_tune(3, 7),
+        eta          = to_tune(0.01, 0.3),
+        subsample    = to_tune(0.6, 1))
+  
+  at_freq = auto_tuner(
+    learner    = as_learner(graph_freq),
+    resampling = rsmp("cv", folds = folds), #ÆNDRET 5 -> 2
+    measure    = msr("classif.bbrier"),
+    tuner      = tnr("random_search"),
+    term_evals = n_evals #Ændret 5 til 1
+  )
+  model_freq <- at_freq$train(task_freq)
+    return(model_freq)
+  }
+  data_trans <- function(data){
+    
+    today <- Sys.Date()
+    
+    date_cols <- c("Date_start_contract", 
+                   "Date_last_renewal",
+                   "Date_next_renewal", 
+                   "Date_lapse")
+    data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
+         .SDcols = date_cols]
+    data[, Period_end :=
+           fifelse(
+             !is.na(Date_lapse) &
+               Date_lapse >= Date_last_renewal &            
+               Date_lapse <= Date_next_renewal,            
+             Date_lapse,
+             pmin(Date_next_renewal, today, na.rm = TRUE) 
+           )]
+    
+    
+    data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
+    data[, Exposure_days  := pmax(Exposure_days, 0)]      
+    data[, Exposure_unit  := fcase(
+      between(Exposure_days, 364, 367), 1,
+      default = Exposure_days/365.25
+    )]
+    
+    
+    #data[, Cost_claims_sum := sum(Cost_claims_year), by = ID]
+    
+    # Add a column that flags the latest row per group
+    
+    setorder(data, ID, -Date_last_renewal)
+    data[, is_second_latest := FALSE]
+    data[, is_second_latest := .I == .I[2], by = ID]
+    # data$Cost_claims_year <- NA
+    
+    key_vars <- c("ID","Year_matriculation","Power",
+                  "Cylinder_capacity","N_doors","Type_fuel","Weight")
+    
+    agg <- data[, .(
+      Exposure               = sum(Exposure_unit),
+      Max_policies_max       = max(Max_policies),
+      Policies_in_force_second_latest = Policies_in_force[is_second_latest],
+      
+      Max_products_max       = max(Max_products),
+      Payment_max            = max(Payment),
+      Premium_second_latest = Premium[is_second_latest],
+      Cost_claim_this_year = Cost_claims_year[which.max(Date_last_renewal)],
+      Cost_claims_sum_history = sum(Cost_claims_year) -(Cost_claims_year[which.max(Date_last_renewal)]),
+      R_claims_history   = max(N_claims_history - N_claims_year)/sum(Exposure_unit),
+      # N_claims_year_sum      = sum(N_claims_year),
+      N_claims_history   = max(N_claims_history - N_claims_year),
+      # R_claims_history_sum   = sum(R_Claims_history),
+      Type_risk_max          = max(Type_risk),
+      Value_vehicle_mean     = mean(Value_vehicle),
+      N_doors_mean           = mean(N_doors),
+      Length_sum             = sum(Length, na.rm = TRUE)
+    ), by = key_vars]
+    
+    
+    
+    
+    
+    agg <- agg %>% 
+      dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
+    
+    tmp <- agg %>%
+      dplyr::filter(is.na(Type_fuel))
+    
+    NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
+    total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
+    
+    na_Y_ratio <- NA_fuel_Y / total_Y
+    
+    agg <- agg %>% 
+      dplyr::filter(!is.na(Type_fuel))
+    
+    agg <- agg %>%
+      dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
+    return(agg)
+  }
+
+
+```
+
+
 
 
 
@@ -82,9 +243,8 @@ where $\kappa$ is the appropriate probability kernel, and we let $y$ be our resp
 Due to simplicity this is not performed.
 
 Next there are some missing values. 
-```{r fig:mice, fig.cap = "Missingness plot, X axis on right shows rows where x is missing, and on the left the amount of rows where it is missing.", echo = FALSE,results=FALSE }
+```{r , fig.cap = "Missingness plot, X axis on right shows rows where x is missing, and on the left the amount of rows where it is missing.", echo = FALSE,results=FALSE }
 
-print(table(is.na(data)))
 
 data_with_na <- data %>% 
   dplyr::select(dplyr::where(~base::anyNA(.x)))
@@ -111,7 +271,7 @@ data <- data %>%
 
 
 Finally we look at the correlation between the covariates.
-```{r fig:correlation, fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
+```{r , fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
 
 num_data <- data %>% 
   dplyr::select(-Date_start_contract,
@@ -319,7 +479,7 @@ We minimize the mse, and find that the optimal variance power through cross-vali
 The random search is not optimal, and one could have used a better optimization algorithm.
 We can look at the model fit, on the whole dataset.
 
-```{r fig:twd_plots, fig.cap= "Residual plot, histogram for residuals, QQ-plot", echo = FALSE}
+```{r , fig.cap= "Residual plot, histogram for residuals, QQ-plot", echo = FALSE}
 
 twd_p1 <- mlr3verse::autoplot(at_twd$predict(task_twd), type = "residual")
 twd_p2 <- mlr3verse::autoplot(at_twd$predict(task_twd), type = "histogram")
@@ -444,7 +604,7 @@ We see that the True positive ratio  is lower than the $PPV = \frac{\text{TP}}{\
 Overall we note that our model seems stable through the cross-validation and that it performs somewhat well.
 
 
-```{r fig:prob_thres, fig.cap = "the bbrier error for each choice of probability threshold in classification", echo = FALSE}
+```{r , fig.cap = "the bbrier error for each choice of probability threshold in classification", echo = FALSE}
 autoplot(ncs_plot_dat[[1]], type = "threshold", measure = msr("classif.acc"))
 
 ```
@@ -452,7 +612,7 @@ Here we see the *acc* error based on the choosen probability threshold, which as
 By setting the threshold higher we could risk introducing more false negatives.
 
 Next we look at the severity model.
-```{r, echo = FALSE, results=FALSE}
+```{r, echo = FALSE, results=FALSE, cache=TRUE, cache.rebuild=TRUE}
 
 data_S <- data_trans(data)
 
@@ -541,7 +701,7 @@ rr_S$aggregate(msr("regr.mse"))
 ```
 
 
-```{r fig:sev_residual, fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis", echo = FALSE}
+```{r , fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis", echo = FALSE}
 
 
 
@@ -555,7 +715,7 @@ Then we can combine the models, and calculate the mean square error for the comb
 We have shown that our models are somewhat acceptable, and we not fit them on the entire dataset and find the out of sample *MSE* for $20$ percent of data.
 
 
-```{r fig:combined_model_plot, fig.cap="Predicted vs. actual", echo = FALSE}
+```{r , fig.cap="Predicted vs. actual", echo = FALSE,message = FALSE, warning = FALSE, results = 'hold' }
 
 DATA <- data_trans(data)
 N <- nrow(DATA)
@@ -618,50 +778,15 @@ We could have fit an EVT distribution on the heavy tailed data, but again this i
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+```{r}
+rmd <- knitr::opts_knit$get("input.file") %||% knitr::current_input()
+stopifnot(!is.null(rmd) && nzchar(rmd))
+tmp <- knitr::purl(input = rmd,
+                   output = tempfile(fileext = ".R"),
+                   documentation = 0, quiet = TRUE)
+code_lines <- readLines(tmp, warn = FALSE, encoding = "UTF-8")
+cat("```r\n", paste(code_lines, collapse = "\n"), "\n```")
+```
 
 
 
