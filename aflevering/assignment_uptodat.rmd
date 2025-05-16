@@ -18,6 +18,7 @@ knitr::opts_chunk$set(
 
 
 ```{r, echo = FALSE, results = FALSE, warnings = FALSE}
+library(rsample)
 library(skimr)
 library(patchwork)
 library(mlr3viz)
@@ -451,13 +452,12 @@ Here we see the *acc* error based on the choosen probability threshold, which as
 By setting the threshold higher we could risk introducing more false negatives.
 
 Next we look at the severity model.
-```{r, echo = FALSE}
+```{r, echo = FALSE, results=FALSE}
 
 data_S <- data_trans(data)
 
 data_S <- data_S %>% dplyr::select(-claim_indicator)
 data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
-
 
 data_S_imputed <- data_S %>%
   # 1) Sæt Inf → NA for alle numeriske kolonner
@@ -486,10 +486,9 @@ data_S_imputed <- data_S %>%
 
 
 
-
-folds_inner <- 2
-folds_outer <- 2
-n_evals     <- 2 
+folds_inner <- 5
+folds_outer <- 5
+n_evals     <- 5 
 
 
 task_S = as_task_regr(
@@ -503,21 +502,22 @@ task_S = as_task_regr(
 graph_S = po("encode") %>>%
   po("learner", lrn("regr.ranger"))
 
+
+
+
 graph_S <- po("imputeoor") %>>%
-  po("encode") %>>%
-  po("learner",
-     lrn("regr.xgboost",
-         objective  = "reg:tweedie",
-         tweedie_variance_power = to_tune(1, 1.9),
-         eta        = to_tune(0.01, 0.2),
-         max_depth  = to_tune(3, 8),
-         subsample  = to_tune(0.6, 1),
-         colsample_bytree = to_tune(0.5, 1),
-         nrounds    = to_tune(300, 1500)))
+           po("encode")    %>>%
+           po("scale")     %>>%
+           po("learner",
+              lrn("regr.lightgbm",
+                  objective       = "quantile",
+                  alpha           = 0.85      
+              ))
 
 
 
-glrn_S = GraphLearner$new(graph_S)
+glrn_S <- GraphLearner$new(graph_S)
+
 
 inner_tuner_S = AutoTuner$new(
   learner    = glrn_S,
@@ -527,7 +527,7 @@ inner_tuner_S = AutoTuner$new(
   terminator = trm("evals", n_evals = n_evals)
 )
 
-outer_cv <- rsmp("cv", folds = outer_folds)
+outer_cv <- rsmp("cv", folds = folds_outer)
 rr_S <- resample(
   task_S,
   inner_tuner_S,
@@ -541,28 +541,78 @@ rr_S$aggregate(msr("regr.mse"))
 ```
 
 
-```{r, echo = FALSE}
+```{r fig:sev_residual, fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis" echo = FALSE}
 
-autoplot(rr_sev, measure = msr("regr.rmse"), type = "boxplot")
-autoplot(final_tuner$learner, type = "importance", top_n = 20)
 
-rr_S$predictions()[[1]]
-autoplot(rr_S$predictions()[[1]], type = "residual")
 
+autoplot(rr_S$prediction(), type = "xy")
 autoplot(rr_S$prediction(), type = "residual")
-
-
-rr_S$predictions()[[1]]$response
-
-qqplot(rr_S$predictions()[[1]]$response, rr_S$predictions()[[1]]$truth)
-abline(a = 0, b= 1)
 
 ```
 
 
-## Comparative discussion
+Then we can combine the models, and calculate the mean square error for the combined model. 
+We have shown that our models are somewhat acceptable, and we not fit them on the entire dataset and find the out of sample *MSE* for $20$ percent of data.
 
 
+```{r, echo = FALSE}
+
+DATA <- data_trans(data)
+N <- nrow(DATA)
+train_idx <- sample(seq_len(N), size = 0.8 * N)
+
+train <- DATA[train_idx, ]
+test <- DATA[-train_idx, ]
+
+
+frekvens_model <- train_freq(train, folds = 2, n_evals = 2)
+
+
+skades_model <- train_severity(train, folds = 2, n_evals = 2)
+
+
+E_N <- frekvens_model$predict_newdata(test)
+E_X <- skades_model$predict_newdata(test)
+
+res <- tibble(
+  E_N = E_N$prob[, 1],
+  E_X =  E_X$response
+  )
+
+res <- res %>% dplyr::mutate(predicted = E_N * E_X )
+
+
+plot(res$predicted, test$Cost_claim_this_year)
+print(mse_oos <- mean((res$predicted-test$Cost_claim_this_year)^2))
+
+
+
+```
+We see here that our final model for the combined model.
+It is clear that both our models perform extremely poorly, and one should probably have split up the claims into small and large claims so we could model the large and small claims independently.
+Since both models are somewhat lacking we stick with the split model, since this is more common in the actuarial business.
+
+
+
+
+## Discussion
+Here we touch upon the various modeling problems.
+##### Pre-processing
+We took a somewhat minimalist approach: obvious date parsing, encoding etc. some slight imputation.
+Since we impute, we impute off random values which adds noise. 
+We could have used better imputation, and our data aggregation could have been slightly better.
+
+
+
+##### Model choices 
+In the frequency model, despite the good accuracy, we miss a lot of false negatives. 
+In the severity model, we severly miss the tail of the distribution. 
+
+##### Evaluation protocol
+
+We did nested cross-validation, but we could have increased the iterations and the number of folds for more stable results. 
+For severity we could have chosen a better metric to optimize for, which will hopefully result in a better model, especially in the tail.
+We could have fit an EVT distribution on the heavy tailed data, but again this is quite strenious for this assignment. 
 
 
 
