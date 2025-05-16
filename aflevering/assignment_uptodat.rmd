@@ -17,8 +17,10 @@ knitr::opts_chunk$set(
 
 
 
-```{r, echo = FALSE, results = FALSE}
+```{r, echo = FALSE, results = FALSE, warnings = FALSE}
+library(skimr)
 library(patchwork)
+library(mlr3viz)
 library(GGally)
 library(tweedie)
 library(mlr3extralearners)
@@ -168,8 +170,13 @@ P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\th
 \end{align*}
 $$
 since it can accommodate a zero-inflated distribution very well.
-
-
+Lastly we introduce the so-called *bbrier* measure, for classification models.
+$$
+\begin{align*}
+\frac{1}{n} \sum_{i=1}^n w_i(1\{X_i = 1 \} - P(X_i = 1))^2
+\end{align*}
+$$
+Which is the mean weighted square euclidean distance between the probability and the true value. 
 ## Modelling and justification
 
 ```{r, echo = FALSE, result = FALSE}
@@ -331,12 +338,284 @@ par(mfrow = c(1,2))
 twd_p1
 twd_p2
 ```
+
+This fit is somewhat disappointing since we severely underestimate the larger claims.
+It is also evident that our data is very heavy tailed, and the tweedie does not fully capture the more extreme events.
+
 ##### Split model
+Next we can look at the split model proposed in the mathematical frame, where we aim to create two models, and then predict in the following manner: 
+$$
+\begin{align*}
+1\{P(N > 0 \mid Z) > t\}\cdot  E(X \mid Z)
+\end{align*}
+$$
+Which is unlike the traditional and proposed $E(N)E(X)$, but since we are asked to predict the next year, we feel like we can provide a suitable approximation with the above prediction.
+This entails fitting both a classification model and a severity model.
+Hence we begin with the frequency classification model.
+We note that we introduce offset on the exposure, so we can weights accordingly to the insurance period.
+We note that 
+```{r, echo = FALSE}
+
+data_F <- data_trans(data)
+data_F <- data_F %>% 
+  dplyr::select(-Cost_claim_this_year)
 
 
+inner_folds <- 2 
+outer_folds <- 2
+n_evals     <- 4
+
+skim(data_F)
+
+task_freq <- as_task_classif(
+  data_F,
+  target = "claim_indicator", 
+  positive = "1", 
+  weights = data_F$Exposure,
+  id = "frek_classif"
+)
+
+graph_freq <- po("encode") %>>%
+  po("scale") %>>%
+  lrn("classif.xgboost",
+      predict_type = "prob", 
+      eval_metric = "logloss",
+      nrounds      = to_tune(200, 800),
+      max_depth    = to_tune(3, 7),
+      eta          = to_tune(0.01, 0.3),
+      subsample    = to_tune(0.6, 1)
+      )
+
+at_inner <- auto_tuner(
+  learner = as_learner(graph_freq), 
+  resampling = rsmp("cv", folds = inner_folds),
+  measure = msr("classif.bbrier"), 
+  tuner = tnr("random_search"),
+  term_evals = n_evals
+)
+
+outer_rsmp <- rsmp("cv", folds = outer_folds)             
+
+rr <- resample(
+  task         = task_freq,
+  learner      = at_inner,      
+  resampling   = outer_rsmp,   
+  store_models = TRUE
+)
+
+
+
+
+
+  
+
+```
+We have fitted the model with nested cross-validation since it provides a more stable estimate of the generalisation error. 
+We use $K = 2$ folds in both the inner and outer loops. 
+Next we look at some model diagnostics. 
+We can look at the combined *bbrier* score for the aggregated model:
+```{r, echo = FALSE}
+print(rr$aggregate(msr("classif.bbrier")))
+```
+which seems quite small.
+Further we have some confusion matrices for each of the folds. 
+```{r}
+
+ncs_plot_dat <- rr$predictions()
+
+
+
+for (i in 1:length(ncs_plot_dat)){
+  cat("Fold: ", i)
+  print(mlr3measures::confusion_matrix(
+    truth = ncs_plot_dat[[i]]$truth,
+    response = ncs_plot_dat[[i]]$response,
+    positive = "1"
+    
+  ))
+}
+
+
+
+```
+Which in general show that the accuracy and precision is very high, meaning that we are usually correct when predicting a claim.
+We see that the True positive ratio  is lower than the $PPV = \frac{\text{TP}}{\text{TP}+ \text{FP}}$, indicating that we miss a fair share of claims. 
+Overall we note that our model seems stable through the cross-validation and that it performs somewhat well.
+
+
+```{r fig:prob_thres, fig.cap = "the bbrier error for each choice of probability threshold in classification", echo = FALSE}
+autoplot(ncs_plot_dat[[1]], type = "threshold", measure = msr("classif.acc"))
+
+```
+Here we see the *acc* error based on the choosen probability threshold, which as expected shows that for example a threshold at $0.5$ results in a pretty good model.
+By setting the threshold higher we could risk introducing more false negatives.
+
+Next we look at the severity model.
+```{r, echo = FALSE}
+
+data_S <- data_trans(data)
+
+data_S <- data_S %>% dplyr::select(-claim_indicator)
+data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
+
+
+data_S_imputed <- data_S %>%
+  # 1) Sæt Inf → NA for alle numeriske kolonner
+  mutate(across(
+    where(is.numeric),
+    ~ ifelse(is.infinite(.x), NA, .x)
+  )) %>%
+  # 2) Imputer hver kolonne; for integer kolonner rundes mean() af til integer
+  mutate(
+    across(
+      .cols = where(is.integer),
+      .fns  = ~ replace_na(
+        .x,
+        as.integer(round(mean(.x, na.rm = TRUE)))
+      )
+    ),
+    across(
+      .cols = where(is.double),
+      .fns  = ~ replace_na(
+        .x,
+        mean(.x, na.rm = TRUE)
+      )
+    )
+  )
+
+
+
+
+
+folds_inner <- 2
+folds_outer <- 2
+n_evals     <- 2 
+
+
+task_S = as_task_regr(
+  data_S_imputed,
+  target = "Cost_claim_this_year",
+  weights = data_S$Exposure,
+  id     = "skade"
+)
+
+
+graph_S = po("encode") %>>%
+  po("learner", lrn("regr.ranger"))
+
+graph_S <- po("imputeoor") %>>%
+  po("encode") %>>%
+  po("learner",
+     lrn("regr.xgboost",
+         objective  = "reg:tweedie",
+         tweedie_variance_power = to_tune(1, 1.9),
+         eta        = to_tune(0.01, 0.2),
+         max_depth  = to_tune(3, 8),
+         subsample  = to_tune(0.6, 1),
+         colsample_bytree = to_tune(0.5, 1),
+         nrounds    = to_tune(300, 1500)))
+
+
+
+glrn_S = GraphLearner$new(graph_S)
+
+inner_tuner_S = AutoTuner$new(
+  learner    = glrn_S,
+  resampling = rsmp("cv", folds = folds_inner),  
+  measure    = msr("regr.mse"),
+  tuner      = tnr("random_search"),
+  terminator = trm("evals", n_evals = n_evals)
+)
+
+outer_cv <- rsmp("cv", folds = outer_folds)
+rr_S <- resample(
+  task_S,
+  inner_tuner_S,
+  outer_cv
+)
+
+
+rr_S$aggregate(msr("regr.mse"))
+
+
+```
+
+
+```{r, echo = FALSE}
+
+autoplot(rr_sev, measure = msr("regr.rmse"), type = "boxplot")
+autoplot(final_tuner$learner, type = "importance", top_n = 20)
+
+rr_S$predictions()[[1]]
+autoplot(rr_S$predictions()[[1]], type = "residual")
+
+autoplot(rr_S$prediction(), type = "residual")
+
+
+rr_S$predictions()[[1]]$response
+
+qqplot(rr_S$predictions()[[1]]$response, rr_S$predictions()[[1]]$truth)
+abline(a = 0, b= 1)
+
+```
 
 
 ## Comparative discussion
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
