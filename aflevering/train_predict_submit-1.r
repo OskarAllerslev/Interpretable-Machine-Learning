@@ -1,7 +1,7 @@
 library(data.table)
 
 # Modify this variable to your group name, which is formatted as FirstName1_LastName1-FirstName2_LastName2-...
-GROUP_NAME <- "Kasper_Jensen-Jakob_Nielsen"
+GROUP_NAME <- "Oskar_Allerslev-Leutrim_Beluli-Lumi_Sogojeva-Jakob_Lethner"
 
 # Define the train function, assume that X is a data.table and y is a vector of responses of the same length as the number of rows in X
 train_model <- function(X, y) {
@@ -161,9 +161,15 @@ train_model <- function(X, y) {
     
     task_S$set_col_roles("Exposure", "weight")
     
-    graph_S = po("encode") %>>%
-      #po("scale") %>>%
-      po("learner", lrn("regr.ranger"))
+    graph_S <- po("imputeoor") %>>%
+      po("encode")    %>>%
+      po("scale")     %>>%
+      po("learner",
+         lrn("regr.lightgbm",
+             objective       = "quantile",
+             alpha           = 0.85      
+         ))
+
     
     glrn_S = GraphLearner$new(graph_S)
     
@@ -195,7 +201,6 @@ train_model <- function(X, y) {
     test_X$Cost_claims_year <- 0 
     # jeg er ldit i tvivlt om det her er helt lovligt 
     test_X <- data_trans(test_X)
-    browser()
     freq_pred <- model_freq$predict_newdata(test_X)
     severity_pred <- model_severity$predict_newdata(test_X)
     
@@ -224,7 +229,6 @@ test_model_passes <- function() {
   train_y <- y[train_idx]
   test_X <- X[test_idx]
   test_y <- y[test_idx]
-  browser()
 
   predict_fun <- train_model(train_X, train_y)
 
@@ -238,4 +242,4 @@ test_model_passes <- function() {
 }
 
 # uncomment this line to test your model
-# test_model_passes()
+test_model_passes()
