@@ -355,7 +355,7 @@ This entails fitting both a classification model and a severity model.
 Hence we begin with the frequency classification model.
 We note that we introduce offset on the exposure, so we can weights accordingly to the insurance period.
 We note that 
-```{r, echo = FALSE}
+```{r, echo = FALSE, results=FALSE}
 
 data_F <- data_trans(data)
 data_F <- data_F %>% 
@@ -420,7 +420,7 @@ print(rr$aggregate(msr("classif.bbrier")))
 ```
 which seems quite small.
 Further we have some confusion matrices for each of the folds. 
-```{r}
+```{r, echo = FALSE}
 
 ncs_plot_dat <- rr$predictions()
 
@@ -541,7 +541,7 @@ rr_S$aggregate(msr("regr.mse"))
 ```
 
 
-```{r fig:sev_residual, fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis" echo = FALSE}
+```{r fig:sev_residual, fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis", echo = FALSE}
 
 
 
@@ -555,7 +555,7 @@ Then we can combine the models, and calculate the mean square error for the comb
 We have shown that our models are somewhat acceptable, and we not fit them on the entire dataset and find the out of sample *MSE* for $20$ percent of data.
 
 
-```{r, echo = FALSE}
+```{r fig:combined_model_plot, fig.cap="Predicted vs. actual", echo = FALSE}
 
 DATA <- data_trans(data)
 N <- nrow(DATA)
