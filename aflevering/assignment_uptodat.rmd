@@ -4,8 +4,9 @@ title: "Assignment 1"
 author: "Jakob og Oskar"
 date: "2025"
 output:
-  pdf_document: default
-  html_document: default
+  pdf_document:
+    latex_engine: pdflatex
+    keep_tex: true
 header-includes:
   - \usepackage{amsmath}
 ---
@@ -24,48 +25,47 @@ knitr::opts_chunk$set(
 ```
 
 
-
 ```{r, echo = FALSE, results=FALSE }
   data_trans <- function(data){
-    
+
     today <- Sys.Date()
-    
-    date_cols <- c("Date_start_contract", 
+
+    date_cols <- c("Date_start_contract",
                    "Date_last_renewal",
-                   "Date_next_renewal", 
+                   "Date_next_renewal",
                    "Date_lapse")
     data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
          .SDcols = date_cols]
     data[, Period_end :=
            fifelse(
              !is.na(Date_lapse) &
-               Date_lapse >= Date_last_renewal &            
-               Date_lapse <= Date_next_renewal,            
+               Date_lapse >= Date_last_renewal &
+               Date_lapse <= Date_next_renewal,
              Date_lapse,
-             pmin(Date_next_renewal, today, na.rm = TRUE) 
+             pmin(Date_next_renewal, today, na.rm = TRUE)
            )]
-    
-    
+
+
     data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
-    data[, Exposure_days  := pmax(Exposure_days, 0)]      
+    data[, Exposure_days  := pmax(Exposure_days, 0)]
     data[, Exposure_unit  := fcase(
       between(Exposure_days, 364, 367), 1,
       default = Exposure_days/365.25
     )]
-    
-    
+
+
     #data[, Cost_claims_sum := sum(Cost_claims_year), by = ID]
-    
+
     # Add a column that flags the latest row per group
-    
+
     # setorder(data, ID, -Date_last_renewal)
     # data[, is_second_latest := seq_len(.N) ==2, by = ID]
     # data[, is_second_latest := FALSE]
     # data[, is_second_latest := .I == .I[2], by = ID]
     # data$Cost_claims_year <- NA
-    
+
     key_vars <- c("ID","Year_matriculation","Power",
-                  "Cylinder_capacity","N_doors","Type_fuel","Weight", "Length", 
+                  "Cylinder_capacity","N_doors","Type_fuel","Weight", "Length",
                   "Area", "Value_vehicle", "Date_birth", "Date_driving_licence", "Date_start_contract")
     data$Date_birth <- as.integer(
       base::format(
@@ -73,7 +73,7 @@ knitr::opts_chunk$set(
         "%Y"
       )
     )
-    
+
     data$Date_driving_licence <- as.integer(
       base::format(
         base::as.Date(data$Date_driving_licence, format = "%d/%m/%Y"),
@@ -92,18 +92,18 @@ knitr::opts_chunk$set(
       Max_policies_max       = max(Max_policies),
       # Policies_in_force_second_latest = Policies_in_force[is_second_latest],
       Max_lapse              = max(Lapse),
-      Max_Date_birth         = max(Date_birth), 
-      Max_Date_driving_licence = max(Date_driving_licence), 
-      Max_Date_start_contract = max(Date_start_contract), 
+      Max_Date_birth         = max(Date_birth),
+      Max_Date_driving_licence = max(Date_driving_licence),
+      Max_Date_start_contract = max(Date_start_contract),
       Distribution_channel = max(Distribution_channel),
-      # dist_channel_0          = dplyr::if_else(Distribution_channel == "0", 1, 0), 
-      # dist_channel_1          = dplyr::if_else(Distribution_channel == "1", 1, 0), 
+      # dist_channel_0          = dplyr::if_else(Distribution_channel == "0", 1, 0),
+      # dist_channel_1          = dplyr::if_else(Distribution_channel == "1", 1, 0),
       # dist_channel_2          = dplyr::if_else(!(Distribution_channel %in% c("0", "1")), 1, 0),
       # max_dist_channel_0     = max(Distribution_channel ),
       Max_products_max       = max(Max_products),
       Payment_max            = max(Payment),
       # Premium_second_latest = Premium[is_second_latest],
-      Mean_premium            = (sum(Premium) - Premium[which.max(Date_last_renewal)]) / (sum(Exposure_unit)), 
+      Mean_premium            = (sum(Premium) - Premium[which.max(Date_last_renewal)]) / (sum(Exposure_unit)),
       Cost_claim_this_year = Cost_claims_year[which.max(Date_last_renewal)],
       Cost_claims_sum_history = sum(Cost_claims_year) -(Cost_claims_year[which.max(Date_last_renewal)]),
       R_claims_history   = max(N_claims_history - N_claims_year)/sum(Exposure_unit),
@@ -115,30 +115,30 @@ knitr::opts_chunk$set(
       N_doors_mean           = mean(N_doors),
       Length_sum             = sum(Length, na.rm = TRUE)
     ), by = key_vars]
-    
-    
-   agg <- agg %>% 
+
+
+   agg <- agg %>%
      dplyr::mutate(
       dist_channel_0          = dplyr::if_else(Distribution_channel == "0", 1, 0),
       dist_channel_1          = dplyr::if_else(Distribution_channel == "1", 1, 0),
       dist_channel_2          = dplyr::if_else(!(Distribution_channel %in% c("0", "1")), 1, 0)
      )
-    
-    
-    agg <- agg %>% 
+
+
+    agg <- agg %>%
       dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
-    
+
     # tmp <- agg %>%
     #   dplyr::filter(is.na(Type_fuel))
-    # 
+    #
     # NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
     # total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
-    # 
+    #
     # na_Y_ratio <- NA_fuel_Y / total_Y
-    
-    # agg <- agg %>% 
+
+    # agg <- agg %>%
     #   dplyr::filter(!is.na(Type_fuel))
-    
+
     # impute the data
     agg <- agg %>%
       dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
@@ -151,21 +151,21 @@ knitr::opts_chunk$set(
       Type_fuel ~ Cylinder_capacity + Weight + Value_vehicle,
       data = na.omit(agg)
     )
-    
-    agg <- agg %>% 
+
+    agg <- agg %>%
       dplyr::mutate(
         pred_length = stats::predict(length_model, newdata = .),
         pred_type_fuel = stats::predict(fuel_model, newdata = .)
-      ) %>% 
+      ) %>%
       dplyr::mutate(
-        Length = dplyr::if_else(is.na(Length), pred_length, Length), 
+        Length = dplyr::if_else(is.na(Length), pred_length, Length),
         Type_fuel = dplyr::if_else(is.na(Type_fuel), pred_type_fuel, Type_fuel)
-      ) %>% 
+      ) %>%
       dplyr::select(-pred_length, -pred_type_fuel)
-    
 
 
-    
+
+
     return(agg)
   }
 
@@ -210,9 +210,9 @@ library(mlr3verse)
 We are tasked with building a predictive regression model, with the best possible prediction.
 This submission will be split up into several parts:
 
-- Initial data preprocessing and overview 
-- Introduction into the mathematics 
-- Modelling and justification 
+- Initial data preprocessing and overview
+- Introduction into the mathematics
+- Modelling and justification
 - Comparative discussion
 
 ## Initial data preprocessing and overview
@@ -225,8 +225,27 @@ data <- fread("Motor vehicle insurance data.csv", sep = ";")
 print(colnames(data))
 
 ```
+```{r}
+filtered_df <- subset(data, Cost_claims_year < 1 & N_claims_year != 0)
+
+# View the number of such rows
+nrow(filtered_df)
+
+# Optionally, view the first few rows
+head(filtered_df)
+
+ggplot(data, aes(x = N_claims_year, y = Cost_claims_year)) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  labs(title = "Scatter Plot of Cost of Claims vs Number of Claims (No Extremes)",
+       x = "Number of Claims This Year",
+       y = "Cost of Claims This Year") +
+  theme_minimal()
+```
+
+
+
 We are asked to predict the **Cost_claims_year** given the rest of the covariate-vector.
-Initially it is important to note that out data is a classical insurance dataset, where we are given rows corresponding to insurance periode for a given contract. 
+Initially it is important to note that out data is a classical insurance dataset, where we are given rows corresponding to insurance periode for a given contract.
 There are several issues with this, since some contracts might overlap into multiple contracts, which can be identified by the ID. It is however very difficult to locate these policies, and we overlook this issue.
 
 There are numerous char. vectors in the data, which can be seen here:
@@ -234,22 +253,22 @@ There are numerous char. vectors in the data, which can be seen here:
 print(str(data))
 
 ```
-One could, model some of the char. vectors like proposed in the lectures, by 
-$$
-\begin{aligned*}
+One could, model some of the char. vectors like proposed in the lectures, by
+
+\begin{align*}
  X_i &= E(Y \mid X_i ) \\
- &=\int_Y y\ \mu(x, dy) 
-\end{aligned*}
-$$
+ &=\int_Y y\ \mu(x, dy)
+\end{align*}
+
 where $\mu$ is the appropriate probability kernel, and we let $y$ be our response.
-However, we choose to take the our char. vectors and round them to yearly values, which then has a ordinal ordering and can thus be used as features. 
+However, we choose to take the our char. vectors and round them to yearly values, which then has a ordinal ordering and can thus be used as features.
 Further we take and one-hot encode *Distribution_channel* by creating three new features which are either $1$ or $0$. Same for the type of fuel.
 
 
-Next there are some missing values. 
+Next there are some missing values.
 ```{r ,  X axis on right shows rows where x is missing, and on the left the amount of rows where it is missing.", echo = FALSE,results=FALSE }
 
-data_with_na <- data %>% 
+data_with_na <- data %>%
   dplyr::select(dplyr::where(~base::anyNA(.x)))
 
 
@@ -262,7 +281,7 @@ data_with_na <- data %>%
 
 mice::md.pattern(data_with_na, plot = TRUE)
 ```
- 
+
 It becomes apparent that there are missing values in the length and type_fuel variable.
 We can see that the missingness is overlapping in $1764$ rows. However the length variable suffers way heavier from missingnes compared to type_fuel.
 In order to impute values, we assume the missingnes it completely at random for both features.
@@ -275,66 +294,67 @@ We consider correlated features to do imputation. We see from the correlation pl
 Finally we look at the correlation between the covariates.
 ```{r corplot, fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
 
-num_data <- data %>% 
+num_data <- data %>%
   mutate(
     Type_fuel_num = case_when(
       Type_fuel == "P" ~ 1,
-      Type_fuel == "D" ~ 0,               
-      TRUE             ~ NA_real_        
+      Type_fuel == "D" ~ 0,
+      TRUE             ~ NA_real_
     ),
-    Length_num = as.numeric(Length)     
-  ) %>% 
-  
+    Length_num = as.numeric(Length)
+  ) %>%
+
   select(
     -Date_start_contract, -Date_last_renewal, -Date_next_renewal,
     -Date_birth, -Date_lapse, -Date_driving_licence,
     -Distribution_channel,
-    -Type_fuel,   
-    -Length      
-  ) %>% 
-  
+    -Type_fuel,
+    -Length
+  ) %>%
+
   select(where(is.numeric))
 
 M <- cor(num_data, use = "pairwise.complete.obs")
 corrplot(M, order = "AOE")
 ```
-We notice some clusters, most meaningfull between *Cylinder_capacity*, *Value_vehicle* and *Weight* which is expected. We deem these to have significant predictive ability, and thus we choose to not remove these. 
+
+We notice some clusters, most meaningfull between *Cylinder_capacity*, *Value_vehicle* and *Weight* which is expected. We deem these to have significant predictive ability, and thus we choose to not remove these.
 The top left cluster, will be ignored for now, since we will later introduce a data-transformation which affects this cluster in a high degree.
 
 
 
 ##### Data Aggregation
 
-For our data aggregation we want to have the ability to assume independence, which we have if we aggregate the rows into being one policy. 
-There are several problems to tacle to achive data in the desired format. 
-We have to both choose an appropriate aggreations function, and we have to consider events where the insured object change. 
-We start off by identifying some unique-identifiers. 
-If theme columns change, we deem the contract to insure a new car, or at least insure something that is independent of what was previously insured. 
-Amongst these unique identifiers are Length, Weight, Power etc. so things which change, probably mean that the thing that is insured has changes. 
+For our data aggregation we want to have the ability to assume independence, which we have if we aggregate the rows into being one policy.
+There are several problems to tacle to achive data in the desired format.
+We have to both choose an appropriate aggreations function, and we have to consider events where the insured object change.
+We start off by identifying some unique-identifiers.
+If theme columns change, we deem the contract to insure a new car, or at least insure something that is independent of what was previously insured.
+Amongst these unique identifiers are Length, Weight, Power etc. so things which change, probably mean that the thing that is insured has changes.
 \\
-Next, we look at how we have aggregated data. Firstly we sum the exposure for each contract, since we will use this to weight in the models later on. 
-Next we use the max function on the number of policies, lapse, date of birth, date of driving licence, start of contract, products, payments, ratio of claims history, type of risk,. 
-For The mean premium we use the mean of the premium without the forward premium, that is the premium for the time we want to predict for. 
-For the value of the veichle, and number of doors we use mean. 
-For the length we use sum since this is just a scaling. 
+Next, we look at how we have aggregated data. Firstly we sum the exposure for each contract, since we will use this to weight in the models later on.
+Next we use the max function on the number of policies, lapse, date of birth, date of driving licence, start of contract, products, payments, ratio of claims history, type of risk,.
+For The mean premium we use the mean of the premium without the forward premium, that is the premium for the time we want to predict for.
+For the value of the veichle, and number of doors we use mean.
+For the length we use sum since this is just a scaling.
 For the variable *cost_claims_this_year* we use the cost of the claims in $\mathcal{F}_t$ where we are to predict data on $\mathcal{F}_{t+1}$.
 
 
 
 
 
-So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain 
-$$
-\begin{aligned*}
+So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain
+
+\begin{align*}
 P\bigl(Z_i \in A,\; Z_k \in B\bigr)
-&= P\bigl(Z_i \in A\bigr)\,P\bigl(Z_k \in B\bigr), 
+&= P\bigl(Z_i \in A\bigr)\,P\bigl(Z_k \in B\bigr),
 \quad A, B \in \mathcal{B}(\mathcal{X}\times\mathcal{Y}).
-\end{aligned*}
-$$
+\end{align*}
+
 
 However this is an empirical assumption which can be violated by catastrophe events.
 
-The aggregating is done by formatting the date covariates such that we can calculate the contract exposure, where we note that one year means $E = 1$, and then sum over the entire *ID*. 
+The aggregating is done by formatting the date covariates such that we can calculate the contract exposure, where we note that one year means $E = 1$, and then sum over the entire *ID*.
 Futher we take the premium, for the second to last entry, since we dont want to have forward-leakage in our data. The same is done for *cost_claims_history*, and related rows.
 We apply a mix of sum and max functions on the remaining rows to ensure that we aggregate data.
 
@@ -343,30 +363,30 @@ We apply a mix of sum and max functions on the remaining rows to ensure that we 
 
 ## Introduction into the mathematical framework
 
-Here we desire some mathematics before we proceed. 
+Here we desire some mathematics before we proceed.
 It could be desireable to look at a classical insurance related result
-$$ 
-\begin{aligned*}
+
+\begin{align*}
 E(S(t) \mid Z=z) &= E\left(\sum_{i=1}^{N(t)} X_i \mid Z = z \right)\\
 &= E\left( \left( \sum_{i=1}^{N(t)} X_i \mid Z = z \cap \mathcal{F}(t) \right)\right) \\
 &=E\left( N E\left( X_i \mid Z = z \right)  \mid Z=z\right) \\
 &= E(N \mid Z = z) E(X_1 \mid Z = z)
-\end{aligned*}
-$$
-Further we define the Tweedie law as 
-$$
-\begin{aligned*}
+\end{align*}
+
+Further we define the Tweedie law as
+
+\begin{align*}
 P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\theta)}{\sigma^2} \right\}\nu_y(dz)
-\end{aligned*}
-$$
+\end{align*}
+
 since it can accommodate a zero-inflated distribution very well.
 Lastly we introduce the so-called *bbrier* measure, for classification models.
-$$
-\begin{aligned*}
+
+\begin{align*}
 \frac{1}{n} \sum_{i=1}^n w_i(1\{X_i = 1 \} - P(X_i = 1))^2
-\end{aligned*}
-$$
-Which is the mean weighted square euclidean distance between the probability and the true value. 
+\end{align*}
+
+Which is the mean weighted square euclidean distance between the probability and the true value.
 ## Modelling and justification
 
 
