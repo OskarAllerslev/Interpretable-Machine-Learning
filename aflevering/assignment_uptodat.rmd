@@ -227,7 +227,7 @@ Initially it is important to note that out data is a classical insurance dataset
 There are several issues with this, since some contracts might overlap into multiple contracts, which can be identified by the ID. It is however very difficult to locate these policies, and we overlook this issue.
 
 There are numerous char. vectors in the data, which can be seen here:
-```{r, echo = FALSE}
+```{r, echo = FALSE, out.width="50%"}
 print(str(data))
 
 ```
@@ -255,9 +255,9 @@ data_with_na <- data %>%
 
 
 
-```{r, out.width="50%" , fig.cap="Missing data plot, right axis shows numer of missing columns in that row, and the left axis show how many rows have this missingness pattern",echo = FALSE}
+```{r, out.width="50%" , fig.cap="Missing data plot, right axis shows numer of missing columns in that row, and the left axis show how many rows have this missingness pattern",echo = FALSE, results="hide", message=FALSE}
 
-mice::md.pattern(data_with_na, plot = TRUE)
+invisible(mice::md.pattern(data_with_na, plot = TRUE))
 ```
 
 It becomes apparent that there are missing values in the length and type_fuel variable.
@@ -268,7 +268,7 @@ We consider correlated features to do imputation. We see from the correlation pl
 
 Our respone variable **Cost_claims_year** suffers from a few extreme values. We decide to remove these values to later on acheive a better model fit. In fig. \ref{fig:outlier_plot}, **N_claims_year** is plotted against **Cost_claims_year**, where at least 5-10 extreme values of **Cost_claims_year* are spotted.
 
-```{r outlier_plot, fig.cap = "Claim costs over number of claims ", echo = FALSE}
+```{r outlier_plot, out.width="50%",  fig.cap = "Claim costs over number of claims ", echo = FALSE}
 #Plotting
 ggplot(data, aes(x = N_claims_year, y = Cost_claims_year)) +
   geom_point(alpha = 0.6, color = "steelblue") +
@@ -286,8 +286,9 @@ data <- data %>%
 ```
 
 
+
 Finally we look at the correlation between the covariates.
-```{r corplot, fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
+```{r corplot, out.width="70%",  fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
 num_data <- data %>%
   mutate(
     Type_fuel_num = case_when(
@@ -337,43 +338,27 @@ For the variable *cost_claims_this_year* we use the cost of the claims in $\math
 
 
 
-So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain
-
-\begin{align*}
-P\bigl(Z_i \in A,\; Z_k \in B\bigr)
-&= P\bigl(Z_i \in A\bigr)\,P\bigl(Z_k \in B\bigr),
-\quad A, B \in \mathcal{B}(\mathcal{X}\times\mathcal{Y}).
-\end{align*}
-
-
+So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain independence on every set in the Borel-set induced.
 However this is an empirical assumption which can be violated by catastrophe events.
-
-The aggregating is done by formatting the date covariates such that we can calculate the contract exposure, where we note that one year means $E = 1$, and then sum over the entire *ID*.
-Futher we take the premium, for the second to last entry, since we dont want to have forward-leakage in our data. The same is done for *cost_claims_history*, and related rows.
-We apply a mix of sum and max functions on the remaining rows to ensure that we aggregate data.
-
-
 
 
 ## Introduction into the mathematical framework
 
-Here we desire some mathematics before we proceed.
-It could be desireable to look at a classical insurance related result
-
+Note the classical derivation of how to decompose a total claim sum. 
 \begin{align*}
 E(S(t) \mid Z=z) &= E\left(\sum_{i=1}^{N(t)} X_i \mid Z = z \right)\\
 &= E\left( \left( \sum_{i=1}^{N(t)} X_i \mid Z = z \cap \mathcal{F}(t) \right)\right) \\
 &=E\left( N E\left( X_i \mid Z = z \right)  \mid Z=z\right) \\
 &= E(N \mid Z = z) E(X_1 \mid Z = z)
 \end{align*}
-
-Further we define the Tweedie law as
-
+We would however like to modify this slightly, later on. 
+Further the general definition of the Tweedie law is  
 \begin{align*}
 P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\theta)}{\sigma^2} \right\}\nu_y(dz)
 \end{align*}
+Where $A \subset \mathbb{R}$ and measurable. $\theta$ is the canonical parameter, and $\kappa_p(\theta)$ is the cumulant function dependent on $p$ the so called tweedie power parameter. $\sigma^2$ is the dispersion parameters, and $\nu_\lambda$ is some sigma-finite base measure depending on the Lebesgue measure. 
 
-since it can accommodate a zero-inflated distribution very well.
+since it can accommodate a zero-inflated distribution very well, we feel the need to introduce this model here.
 Lastly we introduce the so-called *bbrier* measure, for classification models.
 
 \begin{align*}
@@ -381,6 +366,8 @@ Lastly we introduce the so-called *bbrier* measure, for classification models.
 \end{align*}
 
 Which is the mean weighted square euclidean distance between the probability and the true value.
+
+
 ## Modelling and justification
 
 
@@ -433,11 +420,126 @@ if (!file.exists("auto_tuner_tweedie.rds")) {
 at_twd$archive 
 
 ```
+
+```{r, echo = FALSE, results = FALSE}
+
+prep_graph = po("encode") %>>%
+  po("scale")
+
+
+g_lgbm =
+  prep_graph %>>%
+  po("learner",
+     lrn("regr.lightgbm",
+         objective              = "tweedie",
+         tweedie_variance_power = to_tune(1, 1.9),
+         learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
+         num_leaves             = to_tune(16L, 32L),
+         num_iterations         = to_tune(200L, 1000L))
+  )
+
+g_xgb =
+  prep_graph %>>%
+  po("learner",
+     lrn("regr.xgboost",
+         objective              = "reg:tweedie",
+         tweedie_variance_power = to_tune(1, 1.9),
+         eta                    = to_tune(1e-3, 0.2, logscale = TRUE),
+         max_depth              = to_tune(3L, 9L),
+         nrounds                = to_tune(200L, 1000L))              
+  )
+
+g_enet =
+  prep_graph %>>%
+  po("learner",
+     lrn("regr.glmnet",
+         alpha = to_tune(0, 1),
+         s     = to_tune(1e-4, 1, logscale = TRUE))   
+  )
+
+
+auto = function(graph, id)
+{
+  at = AutoTuner$new(
+    learner = GraphLearner$new(graph, id = id),
+    resampling = rsmp("cv", folds = 5), 
+    measure = msr("regr.mse"), 
+    tuner = tnr("random_search"), 
+    terminator = trm("evals", n_evals = 5)
+  )
+  invisible(at)
+}
+
+at_lgbm = auto(g_lgbm, "lgbm")
+at_xgb = auto(g_xgb, "xgb")
+at_enet = auto(g_enet, "enet")
+
+data_twd <- data_trans(data)
+
+task_twd = as_task_regr(data_twd, target = "Cost_claim_this_year",
+                        id = "tweedie")
+task = list(task_twd)
+learners = list(at_lgbm, at_xgb, at_enet)
+design = benchmark_grid(task = task, learners = learners, 
+                        resampling = rsmp("cv", folds = 5))
+
+bmr = benchmark(design)
+
+```
+
+
+
 ##### Tweedie
-Initially we want to fit a Tweedie model on the entire data, since the Tweedie model is known for handeling zero-inflated distributions well.
-We model with a gradient boosting machine, since we have a couple of parameters and the *lightgbm* provides a solid bias-variance trade-off.
-The additive structure of the gradient boosting is preferable over the random forest.
-We minimize the mse, and find that the optimal variance power through cross-validation is approximately $1.82$. This makes the tweedie a compound Poisson-Gamma. This optimal model is found with $19$ leaves.
+Initily we want to fit a Tweedie model on the entire data, since the Tweedie model is known for handeling zero-inflated distributions well.
+
+We apply both the Xgboost, Ligth-gbm and glmnet. 
+For each of these we supply the hyper-parameters search-space. 
+
+
+```{r, echo = FALSE}
+library(gt)
+
+gt::gt(tibble::tibble(
+  Model = c("Xgboost", "lgbm", "glmnet"), 
+  tweedie_power = c("1-1.9", "1-1.9", ""), 
+  learning_rate_eta = c("1e-3 - 0.2", "1e-3 - 0.2", ""), 
+  leaves = c("16 - 32", "3 - 9", ""), 
+  iterations= c("200 - 1000", "200 - 1000", ""), 
+  s = c("", "", "1e-4 - 1"), 
+  alpha = c("", "", "0 - 1") 
+  )
+  )
+
+
+
+
+```
+
+We define the workflow as 
+```{r, echo=FALSE, fig.show="hold"}
+library(DiagrammeR)
+library(patchwork)
+p1 <- g_lgbm$plot()
+p2 <- g_xgb$plot()
+p3 <- g_enet$plot()
+
+# ved ikke lige hvordan man skal plotte det her
+
+
+```
+
+The results are as follows 
+```{r, echo = FALSE}
+
+autoplot(bmr, measure = msr("regr.mse"), type = "boxplot")
+
+```
+
+
+
+
+
+We minimize the mse, and find that the optimal variance power through cross-validation is approximately $1.82$. This makes the tweedie a compound Poisson-Gamma. 
 
 The random search is not optimal, and one could have used a better optimization algorithm.
 We can look at the model fit, on the whole dataset.
