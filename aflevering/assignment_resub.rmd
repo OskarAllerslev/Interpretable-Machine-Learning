@@ -523,11 +523,11 @@ autoplot(bmr, measure = msr("regr.mse"), type = "boxplot")
 
 
 Futher 
-```{r, echo = FALSE}
-bmr$aggregate(msr("regr.mse"))
+```{r, echo = FALSE, include = FALSE}
 
 
-
+invisible({
+  
 bm_agg     = bmr$aggregate(msr("regr.mse"))
 best_row   = which.min(bm_agg$regr.mse)
 
@@ -537,12 +537,14 @@ fold_best  = which.min(rr$score(msr("regr.mse"))$regr.mse)
 auto_best  = rr$learners[[fold_best]]
 
 best_params = auto_best$learner$param_set$values   
-
-hyper_tab_twd <- gt::gt(enframe(best_params, name = "parameter", value = "value"))
-print(hyper_tab_twd)
+})
 
 ```
 
+```{r, echo = FALSE}
+
+gt::gt(enframe(best_params, name = "parameter", value = "value"))
+```
 
 
 vi skal skrive noget mere til ovenstående 
