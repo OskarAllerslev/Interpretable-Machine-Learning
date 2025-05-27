@@ -1,0 +1,16 @@
+---
+title: "Minimal"
+output: 
+  pdf_document:
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Here is a reference to the plot below \ref{fig:minGraph}
+
+```{r minGraph, echo=FALSE, fig.cap="\\label{fig:minGraph}test"}
+plot(x=1)
+```
