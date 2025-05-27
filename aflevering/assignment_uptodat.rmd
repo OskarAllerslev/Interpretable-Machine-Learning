@@ -484,6 +484,9 @@ design = benchmark_grid(task = task, learners = learners,
                         resampling = rsmp("cv", folds = 5))
 
 bmr = benchmark(design)
+saveRDS(bmr, "benchmark_tweedie.rds")
+
+
 
 ```
 
@@ -538,6 +541,11 @@ autoplot(bmr, measure = msr("regr.mse"), type = "boxplot")
 
 
 
+
+
+
+
+######## ret dette til 
 
 We minimize the mse, and find that the optimal variance power through cross-validation is approximately $1.82$. This makes the tweedie a compound Poisson-Gamma. 
 
