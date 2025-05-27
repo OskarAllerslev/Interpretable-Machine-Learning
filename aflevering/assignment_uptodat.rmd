@@ -1,14 +1,10 @@
-
 ---
 title: "Assignment 1"
 author: "Jakob og Oskar"
 date: "2025"
 output:
   pdf_document:
-    latex_engine: pdflatex
-    keep_tex: true
-header-includes:
-  - \usepackage{amsmath}
+    fig_caption: yes
 ---
 
 
@@ -225,22 +221,6 @@ data <- fread("Motor vehicle insurance data.csv", sep = ";")
 print(colnames(data))
 
 ```
-```{r}
-filtered_df <- subset(data, Cost_claims_year < 1 & N_claims_year != 0)
-
-# View the number of such rows
-nrow(filtered_df)
-
-# Optionally, view the first few rows
-head(filtered_df)
-
-ggplot(data, aes(x = N_claims_year, y = Cost_claims_year)) +
-  geom_point(alpha = 0.6, color = "steelblue") +
-  labs(title = "Scatter Plot of Cost of Claims vs Number of Claims (No Extremes)",
-       x = "Number of Claims This Year",
-       y = "Cost of Claims This Year") +
-  theme_minimal()
-```
 
 
 
@@ -285,15 +265,24 @@ mice::md.pattern(data_with_na, plot = TRUE)
 It becomes apparent that there are missing values in the length and type_fuel variable.
 We can see that the missingness is overlapping in $1764$ rows. However the length variable suffers way heavier from missingnes compared to type_fuel.
 In order to impute values, we assume the missingnes it completely at random for both features.
-We consider correlated features to do imputation. We see from the correlation plot (fig. @ref(fig:corplot)) that type_fuel is mostly correlated with Cylinder_capacity, Value_vehicle and Weight. The same goes for the feature Length. Therefore, we fit a multivariate linear regression model with these 3 covariates to predict both type_fuel and Length (using cbind in the response formula). Finally, we predict the missing values using this trained model
+We consider correlated features to do imputation. We see from the correlation plot (fig. \ref{fig:corplot} ) that type_fuel is mostly correlated with Cylinder_capacity, Value_vehicle and Weight. The same goes for the feature Length. Therefore, we fit a multivariate linear regression model with these 3 covariates to predict both type_fuel and Length (using cbind in the response formula). Finally, we predict the missing values using this trained model.
 
 
+Our respone variable **Cost_claims_year** suffers from a few extreme values. We decide to remove these values to later on acheive a better model fit. In fig. \ref{fig:outlier_plot}, **N_claims_year** is plotted against **Cost_claims_year**, where at least 5-10 extreme values of **Cost_claims_year* are spotted.
+
+```{r outlier_plot, fig.cap = "Claim costs over number of claims ", echo = FALSE}
+ggplot(data, aes(x = N_claims_year, y = Cost_claims_year)) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  labs(
+       x = "N_claims_year",
+       y = "Cost_claims_year") +
+  theme_minimal()
+```
 
 
 
 Finally we look at the correlation between the covariates.
 ```{r corplot, fig.cap = "Correlation plot between the continious covariates", echo = FALSE}
-
 num_data <- data %>%
   mutate(
     Type_fuel_num = case_when(
@@ -323,71 +312,71 @@ The top left cluster, will be ignored for now, since we will later introduce a d
 
 
 
-##### Data Aggregation
+<!-- ##### Data Aggregation -->
 
-For our data aggregation we want to have the ability to assume independence, which we have if we aggregate the rows into being one policy.
-There are several problems to tacle to achive data in the desired format.
-We have to both choose an appropriate aggreations function, and we have to consider events where the insured object change.
-We start off by identifying some unique-identifiers.
-If theme columns change, we deem the contract to insure a new car, or at least insure something that is independent of what was previously insured.
-Amongst these unique identifiers are Length, Weight, Power etc. so things which change, probably mean that the thing that is insured has changes.
-\\
-Next, we look at how we have aggregated data. Firstly we sum the exposure for each contract, since we will use this to weight in the models later on.
-Next we use the max function on the number of policies, lapse, date of birth, date of driving licence, start of contract, products, payments, ratio of claims history, type of risk,.
-For The mean premium we use the mean of the premium without the forward premium, that is the premium for the time we want to predict for.
-For the value of the veichle, and number of doors we use mean.
-For the length we use sum since this is just a scaling.
-For the variable *cost_claims_this_year* we use the cost of the claims in $\mathcal{F}_t$ where we are to predict data on $\mathcal{F}_{t+1}$.
-
-
-
-
-
-So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain
-
-\begin{align*}
-P\bigl(Z_i \in A,\; Z_k \in B\bigr)
-&= P\bigl(Z_i \in A\bigr)\,P\bigl(Z_k \in B\bigr),
-\quad A, B \in \mathcal{B}(\mathcal{X}\times\mathcal{Y}).
-\end{align*}
-
-
-However this is an empirical assumption which can be violated by catastrophe events.
-
-The aggregating is done by formatting the date covariates such that we can calculate the contract exposure, where we note that one year means $E = 1$, and then sum over the entire *ID*.
-Futher we take the premium, for the second to last entry, since we dont want to have forward-leakage in our data. The same is done for *cost_claims_history*, and related rows.
-We apply a mix of sum and max functions on the remaining rows to ensure that we aggregate data.
+<!-- For our data aggregation we want to have the ability to assume independence, which we have if we aggregate the rows into being one policy. -->
+<!-- There are several problems to tacle to achive data in the desired format. -->
+<!-- We have to both choose an appropriate aggreations function, and we have to consider events where the insured object change. -->
+<!-- We start off by identifying some unique-identifiers. -->
+<!-- If theme columns change, we deem the contract to insure a new car, or at least insure something that is independent of what was previously insured. -->
+<!-- Amongst these unique identifiers are Length, Weight, Power etc. so things which change, probably mean that the thing that is insured has changes. -->
+<!-- \\ -->
+<!-- Next, we look at how we have aggregated data. Firstly we sum the exposure for each contract, since we will use this to weight in the models later on. -->
+<!-- Next we use the max function on the number of policies, lapse, date of birth, date of driving licence, start of contract, products, payments, ratio of claims history, type of risk,. -->
+<!-- For The mean premium we use the mean of the premium without the forward premium, that is the premium for the time we want to predict for. -->
+<!-- For the value of the veichle, and number of doors we use mean. -->
+<!-- For the length we use sum since this is just a scaling. -->
+<!-- For the variable *cost_claims_this_year* we use the cost of the claims in $\mathcal{F}_t$ where we are to predict data on $\mathcal{F}_{t+1}$. -->
 
 
 
 
-## Introduction into the mathematical framework
 
-Here we desire some mathematics before we proceed.
-It could be desireable to look at a classical insurance related result
+<!-- So we have $Z_i(\omega_i) := (X_i(\omega_i), Y_i(\omega_i)): (\Omega_i, \mathcal{F}_i) \rightarrow ( \mathcal{X} \times \mathcal{Y}, \mathcal{B}(\mathcal{X} \times \mathcal{Y}))$, where by aggregating data row-wise we obtain -->
 
-\begin{align*}
-E(S(t) \mid Z=z) &= E\left(\sum_{i=1}^{N(t)} X_i \mid Z = z \right)\\
-&= E\left( \left( \sum_{i=1}^{N(t)} X_i \mid Z = z \cap \mathcal{F}(t) \right)\right) \\
-&=E\left( N E\left( X_i \mid Z = z \right)  \mid Z=z\right) \\
-&= E(N \mid Z = z) E(X_1 \mid Z = z)
-\end{align*}
+<!-- \begin{align*} -->
+<!-- P\bigl(Z_i \in A,\; Z_k \in B\bigr) -->
+<!-- &= P\bigl(Z_i \in A\bigr)\,P\bigl(Z_k \in B\bigr), -->
+<!-- \quad A, B \in \mathcal{B}(\mathcal{X}\times\mathcal{Y}). -->
+<!-- \end{align*} -->
 
-Further we define the Tweedie law as
 
-\begin{align*}
-P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\theta)}{\sigma^2} \right\}\nu_y(dz)
-\end{align*}
+<!-- However this is an empirical assumption which can be violated by catastrophe events. -->
 
-since it can accommodate a zero-inflated distribution very well.
-Lastly we introduce the so-called *bbrier* measure, for classification models.
+<!-- The aggregating is done by formatting the date covariates such that we can calculate the contract exposure, where we note that one year means $E = 1$, and then sum over the entire *ID*. -->
+<!-- Futher we take the premium, for the second to last entry, since we dont want to have forward-leakage in our data. The same is done for *cost_claims_history*, and related rows. -->
+<!-- We apply a mix of sum and max functions on the remaining rows to ensure that we aggregate data. -->
 
-\begin{align*}
-\frac{1}{n} \sum_{i=1}^n w_i(1\{X_i = 1 \} - P(X_i = 1))^2
-\end{align*}
 
-Which is the mean weighted square euclidean distance between the probability and the true value.
-## Modelling and justification
+
+
+<!-- ## Introduction into the mathematical framework -->
+
+<!-- Here we desire some mathematics before we proceed. -->
+<!-- It could be desireable to look at a classical insurance related result -->
+
+<!-- \begin{align*} -->
+<!-- E(S(t) \mid Z=z) &= E\left(\sum_{i=1}^{N(t)} X_i \mid Z = z \right)\\ -->
+<!-- &= E\left( \left( \sum_{i=1}^{N(t)} X_i \mid Z = z \cap \mathcal{F}(t) \right)\right) \\ -->
+<!-- &=E\left( N E\left( X_i \mid Z = z \right)  \mid Z=z\right) \\ -->
+<!-- &= E(N \mid Z = z) E(X_1 \mid Z = z) -->
+<!-- \end{align*} -->
+
+<!-- Further we define the Tweedie law as -->
+
+<!-- \begin{align*} -->
+<!-- P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\theta)}{\sigma^2} \right\}\nu_y(dz) -->
+<!-- \end{align*} -->
+
+<!-- since it can accommodate a zero-inflated distribution very well. -->
+<!-- Lastly we introduce the so-called *bbrier* measure, for classification models. -->
+
+<!-- \begin{align*} -->
+<!-- \frac{1}{n} \sum_{i=1}^n w_i(1\{X_i = 1 \} - P(X_i = 1))^2 -->
+<!-- \end{align*} -->
+
+<!-- Which is the mean weighted square euclidean distance between the probability and the true value. -->
+<!-- ## Modelling and justification -->
 
 
 
