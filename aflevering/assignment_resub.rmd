@@ -564,7 +564,6 @@ data_F <- data_F %>%
   dplyr::select(-Cost_claim_this_year, - ID)
 
 
-skim(data_F)
 
 task_freq <- as_task_classif(
   data_F,
@@ -585,8 +584,10 @@ g_featureless_f =
   prep_graph %>>%
   po("learner", lrn("classif.featureless", predict_type = "prob"))
 
-# g_rf_f = po("encode") %>>%
-#   po("learner", lrn("classif.ranger", predict_type = "prob"))
+g_rf_f = po("encode") %>>%
+  po("learner", lrn("classif.ranger", predict_type = "prob",
+                    num.trees = to_tune(100L, 500L),
+                    mtry = to_tune(1L, as.integer(sqrt(ncol(data_F)-2)))))
 
 
 g_lgbm_f =
@@ -624,7 +625,7 @@ auto = function(graph, id)
 {
   at = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
-    resampling = rsmp("cv", folds = 5),
+    resampling = rsmp("cv", folds = 2),
     measure = msr("classif.bbrier"),
     tuner = tnr("random_search"),
     terminator = trm("evals", n_evals = 2)
@@ -635,14 +636,14 @@ auto = function(graph, id)
 at_lgbm_f = auto(g_lgbm_f, "lgbm")
 at_xgb_f = auto(g_xgb_f, "xgb")
 at_enet_f = auto(g_enet_f, "enet")
-#at_rf_f = auto(g_rf_f, "ranger")
+at_rf_f = auto(g_rf_f, "ranger")
 at_featureless_f = auto(g_featureless_f, "featureless")
 
 
 tasks_f = list(task_freq)
 learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f )#, at_rf_f)
 design_f = benchmark_grid(task = tasks_f, learners = learners_f,
-                        resampling = rsmp("cv", folds = 5))
+                        resampling = rsmp("cv", folds = 2))
 
 kør_igen <- "nej"
 
@@ -657,11 +658,111 @@ if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens
 
 ```
 
+
+```{r combined_graph_plot, fig.cap = "Input and model flow",  echo=FALSE, message=FALSE, warning=FALSE, results='hide', fig.width=12, fig.height=8, dpi=300}
+
+
+prep_graph = po("encode") %>>% po("scale")
+
+g_featless = prep_graph %>>%
+  po("learner", lrn("classif.featureless", predict_type = "prob"), id = "featless")
+
+g_enet = prep_graph %>>%
+  po("learner", lrn("classif.glmnet", predict_type = "prob"), id = "enet")
+
+g_xgb = prep_graph %>>%
+  po("learner", lrn("classif.xgboost", predict_type = "prob"), id = "xgb")
+
+g_lgbm = prep_graph %>>%
+  po("learner", lrn("classif.lightgbm", predict_type = "prob"), id = "lgbm")
+
+g_ranger = prep_graph %>>%
+  po("learner", lrn("classif.ranger", predict_type = "prob"), id = "ranger")
+
+learners_union = gunion(list(
+  g_featless, g_enet, g_xgb, g_lgbm, g_ranger
+))
+
+combined_graph = prep_graph %>>% learners_union
+combined_graph$plot(html = FALSE)
+
+```
+
+
+Next we show the parameter space: 
+```{r parameter_space_frek, echo = FALSE}
+
+
+max_mtry <- as.integer(sqrt(ncol(data_F) - 2))
+
+param_tbl <- tibble(
+  Model                 = c("XGBoost",      "LightGBM",      "glmnet",     "Ranger"),
+  `learning_rate / eta` = c("0.01 – 0.3",   "1e-3 – 0.2",    "",           ""),
+  `leaves / depth`      = c("3 – 7 (depth)","16 – 32 (leaves)","",          ""),
+  `iterations / trees`  = c("200 – 800",    "200 – 1000",    "",           "100 – 500"),
+  subsample             = c("0.6 – 1",      "",              "",           ""),
+  mtry                  = c("",             "",              "",           paste0("1 – ", max_mtry)),
+  alpha                 = c("",             "",              "0 – 1",      ""),
+  s                     = c("",             "",              "1e-4 – 1",   "")
+)
+
+gt(param_tbl) |>
+  tab_header(title = md("**Parameter search space**"))
+
+
+
+```
+
+
+
 ```{r boxplot_frek_kun,  fig.cap = "MSE boxplot", echo = FALSE}
 
 autoplot(bmr_f, measure = msr("classif.bbrier"), type = "boxplot")
 
 ```
+
+
+```{r, echo = FALSE, include = FALSE}
+
+
+invisible({
+  
+bm_agg     = bmr_f$aggregate(msr("classif.bbrier"))
+best_row   = which.min(bm_agg$classif.bbrier)
+
+rr         = bmr_f$resample_result(best_row)
+fold_best  = which.min(rr$score(msr("classif.bbrier"))$classif.bbrier)
+
+
+auto_best  = rr$learners[[fold_best]]
+auto_best$tuning_result
+
+
+
+best_params = auto_best$learner$param_set$values   
+})
+
+```
+
+```{r best_parameters_tweedie, echo = FALSE}
+
+gt::gt(enframe(best_params, name = "parameter", value = "value")) %>%
+  tab_header(
+    title = md("**Best parameters tweedie**")
+  )
+
+```
+
+
+
+
+
+
+
+
+
+
+
 
 We have fitted the model with nested cross-validation since it provides a more stable estimate of the generalisation error.
 Next we look at some model diagnostics.
