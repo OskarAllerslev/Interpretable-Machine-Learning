@@ -571,7 +571,7 @@ task_freq <- as_task_classif(
   target = "claim_indicator",
   positive = "1",
   weights = data_F$Exposure,
-  id = "frek_classif"
+  id = "frequency"
 )
 
 # stratificer tjek at det faktisk er hvad der sker her
@@ -585,8 +585,8 @@ g_featureless_f =
   prep_graph %>>%
   po("learner", lrn("classif.featureless", predict_type = "prob"))
 
-g_rf_f = po("encode") %>>%
-  po("learner", lrn("classif.ranger", predict_type = "prob"))
+# g_rf_f = po("encode") %>>%
+#   po("learner", lrn("classif.ranger", predict_type = "prob"))
 
 
 g_lgbm_f =
@@ -635,12 +635,12 @@ auto = function(graph, id)
 at_lgbm_f = auto(g_lgbm_f, "lgbm")
 at_xgb_f = auto(g_xgb_f, "xgb")
 at_enet_f = auto(g_enet_f, "enet")
+#at_rf_f = auto(g_rf_f, "ranger")
 at_featureless_f = auto(g_featureless_f, "featureless")
-at_rf_f = auto(g_rf_f, "ranger")
 
 
 tasks_f = list(task_freq)
-learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f, at_rf_f)
+learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f )#, at_rf_f)
 design_f = benchmark_grid(task = tasks_f, learners = learners_f,
                         resampling = rsmp("cv", folds = 5))
 
@@ -664,7 +664,6 @@ autoplot(bmr_f, measure = msr("classif.bbrier"), type = "boxplot")
 ```
 
 We have fitted the model with nested cross-validation since it provides a more stable estimate of the generalisation error.
-We use $K = 5$ folds in both the inner and outer loops.
 Next we look at some model diagnostics.
 We can look at the combined *bbrier* score for the aggregated model:
 ```{r, echo = FALSE}
@@ -716,7 +715,7 @@ task_S = as_task_regr(
   data_S,
   target = "Cost_claim_this_year",
   weights = data_S$Exposure,
-  id     = "skade"
+  id     = "severity"
 )
 
 prep_graph = po("encode") %>>%
@@ -847,8 +846,6 @@ if (final_eval) {
 We see here that our final model for the combined model.
 It is clear that both our models perform extremely poorly, and one should probably have split up the claims into small and large claims so we could model the large and small claims independently.
 Since both models are somewhat lacking we stick with the split model, since this is more common in the actuarial business.
-
-
 
 
 ## Discussion
