@@ -460,7 +460,7 @@ learners = list(at_lgbm, at_xgb, at_enet, at_featureless)
 design = benchmark_grid(task = task, learners = learners, 
                         resampling = rsmp("cv", folds = 5))
 
-kør_igen <- "nej"
+kør_igen <- "ja"
 
 if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_tweedie.rds" ) | kør_igen == "ja") {
   bmr = benchmark(design, store_models = TRUE)
@@ -474,11 +474,33 @@ if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_tweedie.
 
 
 
+
 ##### Tweedie
 Initily we want to fit a Tweedie model on the entire data, since the Tweedie model is known for handeling zero-inflated distributions well.
+We plot the distribution of the claim size. 
+```{r, fig.cap="Distribution of claim size pr. unique contract", echo=FALSE, warning=FALSE}
+library(patchwork)
+p1 <- data_trans %>% ggplot2::ggplot() +
+  ggplot2::geom_density(ggplot2::aes(x = Cost_claim_this_year), size = 1, color = "darkblue") +
+  ggplot2::theme_minimal() +
+  ggplot2::ggtitle(label = "Response")
+  
+p2 <- data_trans %>% ggplot2::ggplot() +
+  ggplot2::geom_density(ggplot2::aes(x = log(Cost_claim_this_year)), size = 1, color = "darkred") +
+  ggplot2::theme_minimal() +
+  ggplot2::ggtitle(label = "Log transformed response")
+
+(p1 + p2)
+
+
+```
+
 
 We apply both the Xgboost, Ligth-gbm and glmnet. 
 For each of these we supply search-space information in the **Parameter search space** Table. 
+
+
+
 
 
 ```{r parameter_space_tweedie, echo = FALSE}
@@ -530,6 +552,7 @@ And finally the chosen hyperparameters are presented in Table **Best parameters 
 ```{r, echo = FALSE, include = FALSE}
 
 
+
 invisible({
   
 bm_agg     = bmr$aggregate(msr("regr.mse"))
@@ -553,6 +576,12 @@ gt::gt(enframe(best_params, name = "parameter", value = "value")) %>%
   )
 
 ```
+
+
+
+
+
+
 
 
 vi skal skrive noget mere til ovenstående, når resultater er på plads!
