@@ -429,7 +429,7 @@ auto = function(graph, id)
 {
   at = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
-    resampling = rsmp("cv", folds = 5), 
+    resampling = rsmp("cv", folds = 2), 
     measure = msr("regr.mse"), 
     tuner = tnr("random_search"), 
     terminator = trm("evals", n_evals = 2)
@@ -458,9 +458,9 @@ task_twd$col_roles$stratum = "Cost_claim_this_year"
 task = list(task_twd)
 learners = list(at_lgbm, at_xgb, at_enet, at_featureless)
 design = benchmark_grid(task = task, learners = learners, 
-                        resampling = rsmp("cv", folds = 5))
+                        resampling = rsmp("cv", folds = 2))
 
-kør_igen <- "ja"
+kør_igen <- "nej"
 
 if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_tweedie.rds" ) | kør_igen == "ja") {
   bmr = benchmark(design, store_models = TRUE)
@@ -552,7 +552,6 @@ And finally the chosen hyperparameters are presented in Table **Best parameters 
 ```{r, echo = FALSE, include = FALSE}
 
 
-
 invisible({
   
 bm_agg     = bmr$aggregate(msr("regr.mse"))
@@ -561,7 +560,11 @@ best_row   = which.min(bm_agg$regr.mse)
 rr         = bmr$resample_result(best_row)
 fold_best  = which.min(rr$score(msr("regr.mse"))$regr.mse)
 
+
 auto_best  = rr$learners[[fold_best]]
+auto_best$tuning_result
+
+
 
 best_params = auto_best$learner$param_set$values   
 })
@@ -577,14 +580,13 @@ gt::gt(enframe(best_params, name = "parameter", value = "value")) %>%
 
 ```
 
+This tweedie power parameter makes the model a compound gamma. 
 
 
 
 
 
 
-
-vi skal skrive noget mere til ovenstående, når resultater er på plads!
 
 
 
