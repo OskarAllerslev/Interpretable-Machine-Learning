@@ -50,16 +50,6 @@ knitr::opts_chunk$set(
     )]
 
 
-    #data[, Cost_claims_sum := sum(Cost_claims_year), by = ID]
-
-    # Add a column that flags the latest row per group
-
-    # setorder(data, ID, -Date_last_renewal)
-    # data[, is_second_latest := seq_len(.N) ==2, by = ID]
-    # data[, is_second_latest := FALSE]
-    # data[, is_second_latest := .I == .I[2], by = ID]
-    # data$Cost_claims_year <- NA
-
     key_vars <- c("ID","Year_matriculation","Power",
                   "Cylinder_capacity","N_doors","Type_fuel","Weight", "Length",
                   "Area", "Value_vehicle", "Date_birth", "Date_driving_licence", "Date_start_contract")
@@ -86,26 +76,20 @@ knitr::opts_chunk$set(
     agg <- data[, .(
       Exposure               = sum(Exposure_unit),
       Max_policies_max       = max(Max_policies),
-      # Policies_in_force_second_latest = Policies_in_force[is_second_latest],
       Max_lapse              = max(Lapse),
       Max_Date_birth         = max(Date_birth),
       Max_Date_driving_licence = max(Date_driving_licence),
       Max_Date_start_contract = max(Date_start_contract),
-      #Distribution_channel = as.integer(max(Distribution_channel)),
       dist_channel_0 = as.integer(any(Distribution_channel == "0")),
       dist_channel_1 = as.integer(any(Distribution_channel == "1")),
       dist_channel_2 = as.integer(any(!(Distribution_channel %in% c("0", "1")))),
-      # max_dist_channel_0     = max(Distribution_channel ),
       Max_products_max       = max(Max_products),
       Payment_max            = max(Payment),
-      # Premium_second_latest = Premium[is_second_latest],
       Mean_premium            = (sum(Premium) - Premium[which.max(Date_last_renewal)]) / (sum(Exposure_unit)),
       Cost_claim_this_year = Cost_claims_year[which.max(Date_last_renewal)],
       Cost_claims_sum_history = sum(Cost_claims_year) -(Cost_claims_year[which.max(Date_last_renewal)]),
       R_claims_history   = max(N_claims_history - N_claims_year)/sum(Exposure_unit),
-      # N_claims_year_sum      = sum(N_claims_year),
       N_claims_history   = max(N_claims_history - N_claims_year),
-      # R_claims_history_sum   = sum(R_Claims_history),
       Type_risk_max          = max(Type_risk),
       Value_vehicle_mean     = mean(Value_vehicle),
       N_doors_mean           = mean(N_doors),
@@ -113,29 +97,9 @@ knitr::opts_chunk$set(
     ), by = key_vars]
 
 
-   # agg <- agg %>%
-   #   dplyr::mutate(
-   #    dist_channel_0          = dplyr::if_else(Distribution_channel == "0", 1, 0),
-   #    dist_channel_1          = dplyr::if_else(Distribution_channel == "1", 1, 0),
-   #    dist_channel_2          = dplyr::if_else(!(Distribution_channel %in% c("0", "1")), 1, 0)
-   #   )
-
-
     agg <- agg %>%
       dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
 
-    # tmp <- agg %>%
-    #   dplyr::filter(is.na(Type_fuel))
-    #
-    # NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
-    # total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
-    #
-    # na_Y_ratio <- NA_fuel_Y / total_Y
-
-    # agg <- agg %>%
-    #   dplyr::filter(!is.na(Type_fuel))
-
-    # impute the data
     agg <- agg %>%
       dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
 
@@ -165,11 +129,6 @@ knitr::opts_chunk$set(
 
 
 ```
-
-
-
-
-
 
 
 
@@ -262,12 +221,12 @@ invisible(mice::md.pattern(data_with_na, plot = TRUE))
 ```
 
 It becomes apparent that there are missing values in the length and type_fuel variable.
-We can see that the missingness is overlapping in $1764$ rows. However the length variable suffers way heavier from missingnes compared to type_fuel.
-In order to impute values, we assume the missingnes it completely at random for both features.
+We can see that the missing is overlapping in $1764$ rows. However the length variable suffers way heavier from missing compared to type_fuel.
+In order to impute values, we assume the missing it completely at random for both features.
 We consider correlated features to do imputation. We see from the correlation plot (fig. \ref{fig:corplot} ) that type_fuel is mostly correlated with Cylinder_capacity, Value_vehicle and Weight. The same goes for the feature Length. Therefore, we fit a multivariate linear regression model with these 3 covariates to predict both type_fuel and Length (using cbind in the response formula). Finally, we predict the missing values using this trained model.
 
 
-Our respone variable **Cost_claims_year** suffers from a few extreme values. We decide to remove these values to later on acheive a better model fit. In fig. \ref{fig:outlier_plot}, **N_claims_year** is plotted against **Cost_claims_year**, where at least 5-10 extreme values of **Cost_claims_year** are spotted.
+Our response variable **Cost_claims_year** suffers from a few extreme values. We decide to remove these values to later on achieve a better model fit. In fig. \ref{fig:outlier_plot}, **N_claims_year** is plotted against **Cost_claims_year**, where at least 5-10 extreme values of **Cost_claims_year** are spotted.
 
 ```{r outlier_plot, out.width="50%",  fig.cap = "Claim costs over number of claims ", echo = FALSE}
 #Plotting
@@ -321,21 +280,19 @@ The top left cluster, will be ignored for now, since we will later introduce a d
 
 ##### Data Aggregation
 
-For our data aggregation we want to have the ability to assume independence, which we have if we aggregate the rows into being one policy.
-There are several problems to tacle to achive data in the desired format.
-We have to both choose an appropriate aggreations function, and we have to consider events where the insured object change.
+For our data aggregation we want the ability to assume independence, which we have if we aggregate the rows into one policy.
+There are several problems to tackle to achieve data in the desired format.
+We have to both choose an appropriate aggregation, and we have to consider events where the insured object change.
 We start off by identifying some unique-identifiers.
-If theme columns change, we deem the contract to insure a new car, or at least insure something that is independent of what was previously insured.
-Amongst these unique identifiers are Length, Weight, Power etc. so things which change, probably mean that the thing that is insured has changes.
+If these columns change, we deem the contract to insure a new car, or at least insure something that is independent of what was previously insured.
+Among these unique identifiers are **Length**, **Weight**, **Power** etc. If these change, it probably means that the insured object has changed.
 \\
-Next, we look at how we have aggregated data. Firstly we sum the exposure for each contract, since we will use this to weight in the models later on.
+Next, we look at how we have aggregate data. Firstly we sum the exposure for each contract, since we will use this to weight in the models later on.
 Next we use the max function on the number of policies, lapse, date of birth, date of driving licence, start of contract, products, payments, ratio of claims history, type of risk,.
 For The mean premium we use the mean of the premium without the forward premium, that is the premium for the time we want to predict for.
-For the value of the veichle, and number of doors we use mean.
+For the value of the vehicle, and number of doors we use mean.
 For the length we use sum since this is just a scaling.
 For the variable *cost_claims_this_year* we use the cost of the claims in $\mathcal{F}_t$ where we are to predict data on $\mathcal{F}_{t+1}$.
-
-
 
 
 
@@ -357,7 +314,7 @@ Further the general definition of the Tweedie law is
 \begin{align*}
 P_{\theta, \sigma^2}(Y \in A) = \int_A \exp\left\{ \frac{\theta z - \kappa_p(\theta)}{\sigma^2} \right\}\nu_y(dz)
 \end{align*}
-Where $A \subset \mathbb{R}$ and measurable. $\theta$ is the canonical parameter, and $\kappa_p(\theta)$ is the cumulant function dependent on $p$ the so called tweedie power parameter. $\sigma^2$ is the dispersion parameters, and $\nu_\lambda$ is some sigma-finite base measure depending on the Lebesgue measure. 
+Where $A \subset \mathbb{R}$ and measurable. $\theta$ is the canonical parameter, and $\kappa_p(\theta)$ is the cumulative function dependent on $p$ the so called tweedie power parameter. $\sigma^2$ is the dispersion parameters, and $\nu_\lambda$ is some sigma-finite base measure depending on the Lebesgue measure. 
 
 since it can accommodate a zero-inflated distribution very well, we feel the need to introduce this model here.
 Lastly we introduce the so-called *bbrier* measure, for classification models.
@@ -373,8 +330,8 @@ Which is the mean weighted square euclidean distance between the probability and
 
 In this section, we train and evauluate different models. 
 For all the proposed models, we have caried out nested crossvalidition. 
-We do stratified resampling in both the inner and outer cv loops, to ensure both zero and non-zero claims over the training and test set.
-I final note, that goes for all our trained models, is that we introduce offset on the exposure. Meaning: Give more importance to observations with more exposure since they represent more information. 
+We do stratified resampling in both the inner and outer cross-validation-loops, to ensure both zero and non-zero claims over the training and test set.
+I final note, that goes for all our trained models, is that we introduce offset on the exposure. Meaning: Give more importance to observations with more exposure since, they represent more information. 
 ```{r}
 #Common trans dataset to skip rerunning trans
 
@@ -497,7 +454,7 @@ p2 <- data_trans %>% ggplot2::ggplot() +
 
 
 We apply both the Xgboost, Ligth-gbm and glmnet. 
-For each of these we supply search-space information in the **Parameter search space** Table. 
+For each of these we supply search-space information in the "**Parameter search space**" Table. 
 
 
 
@@ -522,7 +479,7 @@ gt::gt(tibble::tibble(
 
 ```
 
-We define the workflow as shown in \ref{fig:combined_graph_plot}. 
+We define the workflow as shown in figure \ref{fig:combined_graph_plot}. 
 
 ```{r combined_graph_plot, fig.cap = "Input and model flow",  echo=FALSE, message=FALSE, warning=FALSE, results='hide', fig.width=12, fig.height=8, dpi=300}
 
@@ -540,7 +497,7 @@ combined_graph$plot()
 
 ```
 
-The results of the nested cross-validation are shown in \ref{fig:boxplot_tweedie_kun}. 
+The results of the nested cross-validation are shown in figure \ref{fig:boxplot_tweedie_kun}. 
 
 ```{r boxplot_tweedie_kun,  fig.cap = "MSE boxplot", echo = FALSE}
 
@@ -548,7 +505,7 @@ autoplot(bmr, measure = msr("regr.mse"), type = "boxplot")
 ```
 
 
-And finally the chosen hyperparameters are presented in Table **Best parameters tweedie**. 
+And finally the chosen hyperparameters are presented in Table "**Best parameters tweedie**". 
 ```{r, echo = FALSE, include = FALSE}
 
 
