@@ -329,7 +329,7 @@ Which is the mean weighted square euclidean distance between the probability and
 ## Modelling and justification
 
 In this section, we train and evauluate different models. 
-For all the proposed models, we have caried out nested crossvalidition. 
+For all the proposed models, we have caried out nested cross-validition. Also we stick to 5 folds for both inner and outer resampling, with 2 evaluations.
 We do stratified resampling in both the inner and outer cross-validation-loops, to ensure both zero and non-zero claims over the training and test set.
 I final note, that goes for all our trained models, is that we introduce offset on the exposure. Meaning: Give more importance to observations with more exposure since, they represent more information. 
 ```{r}
@@ -386,7 +386,7 @@ auto = function(graph, id)
 {
   at = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
-    resampling = rsmp("cv", folds = 2), 
+    resampling = rsmp("cv", folds = 5), 
     measure = msr("regr.mse"), 
     tuner = tnr("random_search"), 
     terminator = trm("evals", n_evals = 2)
@@ -415,7 +415,7 @@ task_twd$col_roles$stratum = "Cost_claim_this_year"
 task = list(task_twd)
 learners = list(at_lgbm, at_xgb, at_enet, at_featureless)
 design = benchmark_grid(task = task, learners = learners, 
-                        resampling = rsmp("cv", folds = 2))
+                        resampling = rsmp("cv", folds = 5))
 
 kør_igen <- "nej"
 
@@ -564,11 +564,6 @@ data_F <- data_F %>%
   dplyr::select(-Cost_claim_this_year, - ID)
 
 
-folds_inner <- 2
-folds_outer <- 2
-n_evals     <- 1
-
-
 skim(data_F)
 
 task_freq <- as_task_classif(
@@ -629,10 +624,10 @@ auto = function(graph, id)
 {
   at = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
-    resampling = rsmp("cv", folds = 2),
+    resampling = rsmp("cv", folds = 5),
     measure = msr("classif.bbrier"),
     tuner = tnr("random_search"),
-    terminator = trm("evals", n_evals = 1)
+    terminator = trm("evals", n_evals = 2)
   )
   invisible(at)
 }
@@ -647,7 +642,7 @@ at_rf_f = auto(g_rf_f, "ranger")
 tasks_f = list(task_freq)
 learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f, at_rf_f)
 design_f = benchmark_grid(task = tasks_f, learners = learners_f,
-                        resampling = rsmp("cv", folds = 2))
+                        resampling = rsmp("cv", folds = 5))
 
 kør_igen <- "nej"
 
@@ -669,7 +664,7 @@ autoplot(bmr_f, measure = msr("classif.bbrier"), type = "boxplot")
 ```
 
 We have fitted the model with nested cross-validation since it provides a more stable estimate of the generalisation error.
-We use $K = 2$ folds in both the inner and outer loops.
+We use $K = 5$ folds in both the inner and outer loops.
 Next we look at some model diagnostics.
 We can look at the combined *bbrier* score for the aggregated model:
 ```{r, echo = FALSE}
@@ -716,11 +711,6 @@ data_S <- data_trans
 data_S <- data_S %>% dplyr::select(-claim_indicator, -ID)
 data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
 data_S <- data_S %>% mutate(Cost_claim_this_year = log(Cost_claim_this_year))
-
-folds_inner <- 2
-folds_outer <- 2
-n_evals     <- 1
-
 
 task_S = as_task_regr(
   data_S,
@@ -774,10 +764,10 @@ auto = function(graph, id)
 {
   at_s = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
-    resampling = rsmp("cv", folds = 2),
+    resampling = rsmp("cv", folds = 5),
     measure = msr("regr.mse"),
     tuner = tnr("random_search"),
-    terminator = trm("evals", n_evals = 1)
+    terminator = trm("evals", n_evals = 2)
   )
   invisible(at_s)
 }
@@ -791,7 +781,7 @@ at_featureless_s = auto(g_featureless_s, "featureless")
 tasks_s = list(task_S)
 learners_s = list(at_lgbm_s, at_xgb_s, at_enet_s, at_featureless_s)
 design_s = benchmark_grid(task = tasks_s, learners = learners_s,
-                        resampling = rsmp("cv", folds = 2))
+                        resampling = rsmp("cv", folds = 5))
 
 kør_igen <- "nej"
 
