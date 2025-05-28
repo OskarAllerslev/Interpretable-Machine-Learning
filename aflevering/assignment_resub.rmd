@@ -164,7 +164,6 @@ knitr::opts_chunk$set(
   }
 
 
-
 ```
 
 
@@ -376,6 +375,12 @@ In this section, we train and evauluate different models.
 For all the proposed models, we have caried out nested crossvalidition. 
 We do stratified resampling in both the inner and outer cv loops, to ensure both zero and non-zero claims over the training and test set.
 I final note, that goes for all our trained models, is that we introduce offset on the exposure. Meaning: Give more importance to observations with more exposure since they represent more information. 
+```{r}
+#Common trans dataset to skip rerunning trans
+
+data_trans <- data_trans(data)
+
+```
 
 
 ```{r, echo = FALSE, results = FALSE}
@@ -438,7 +443,7 @@ at_enet = auto(g_enet, "enet")
 at_featureless = auto(g_featureless, "featureless")
 
 
-data_twd <- data_trans(data)
+data_twd <- data_trans
 data_twd <- data_twd %>%
   dplyr::select(-claim_indicator, - ID)
 
@@ -515,7 +520,7 @@ combined_graph$plot()
 
 The results of the nested cross-validation are shown in \ref{fig:boxplot_kun}. 
 
-```{r boxplot_kun,  fig.cap = "MSE boxplot", echo = FALSE}
+```{r boxplot_tweedie_kun,  fig.cap = "MSE boxplot", echo = FALSE}
 
 autoplot(bmr, measure = msr("regr.mse"), type = "boxplot")
 ```
@@ -565,188 +570,113 @@ This entails fitting both a frequency model and a severity model.
 Hence we begin with the frequency regression model.
 
 ```{r, echo = FALSE, results=FALSE}
-# 
-# data_F <- data_trans(data)
-# data_F <- data_F %>%
-#   dplyr::select(-Cost_claim_this_year, - ID)
-# 
-# 
-# folds_inner <- 2
-# folds_outer <- 2
-# n_evals     <- 1
-# 
-# 
-# skim(data_F)
-# 
-# task_freq <- as_task_classif(
-#   data_F,
-#   target = "claim_indicator",
-#   positive = "1",
-#   weights = data_F$Exposure,
-#   id = "frek_classif"
-# )
-# 
-# # stratificer tjek at det faktisk er hvad der sker her
-# task_freq$col_roles$stratum = "claim_indicator"
-# 
-# 
-# prep_graph = po("encode") %>>%
-#   po("scale")
-# 
-# g_featureless =
-#   prep_graph %>>%
-#   po("learner",
-#      lrn("regr.featureless")
-#   )
-# 
-# 
-# g_rf = po("encode") %>>%
-#   po("learner", lrn("regr.ranger"))
-# 
-# 
-# g_lgbm =
-#   prep_graph %>>%
-#   po("learner",
-#      lrn("regr.lightgbm",
-#          objective              = "gamma",
-#          learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
-#          num_leaves             = to_tune(16L, 32L),
-#          num_iterations         = to_tune(200L, 1000L))
-#   )
-# 
-# 
-# g_xgb =
-#   prep_graph %>>%
-#   po("learner",
-#      lrn("classif.xgboost",
-#       predict_type = "prob",
-#       eval_metric = "logloss",
-#       nrounds      = to_tune(200, 800),
-#       max_depth    = to_tune(3, 7),
-#       eta          = to_tune(0.01, 0.3),
-#       subsample    = to_tune(0.6, 1)            
-#   )
-# 
-# g_enet =
-#   prep_graph %>>%
-#   po("learner",
-#      lrn("regr.glmnet",
-#          alpha = to_tune(0, 1),
-#          s     = to_tune(1e-4, 1, logscale = TRUE))   
-#   )
-# 
-# 
-# auto = function(graph, id)
-# {
-#   at = AutoTuner$new(
-#     learner = GraphLearner$new(graph, id = id),
-#     resampling = rsmp("cv", folds = 2), 
-#     measure = msr("regr.mse"), 
-#     tuner = tnr("random_search"), 
-#     terminator = trm("evals", n_evals = 1)
-#   )
-#   invisible(at)
-# }
-# 
-# at_lgbm = auto(g_lgbm, "lgbm")
-# at_xgb = auto(g_xgb, "xgb")
-# at_enet = auto(g_enet, "enet")
-# at_featureless = auto(g_featureless, "featureless")
-# at_rf = auto(g_rf, "featureless")
-# 
-# 
-# task = list(task_S)
-# learners = list(at_lgbm, at_xgb, at_enet, at_featureless, g_rf)
-# design = benchmark_grid(task = task, learners = learners, 
-#                         resampling = rsmp("cv", folds = 2))
-# 
-# kør_igen <- "Nej"
-# 
-# 
-# if (!file.exists("~/Interpretable-Machine-Learning/aflevering/severity_model.rds" ) | kør_igen == "ja") {
-#   bmr_s = benchmark(design, store_models = TRUE)
-#   saveRDS(bmr_s, "~/Interpretable-Machine-Learning/aflevering/severity_model.rds")
-# } else {
-#   bmr_s = readRDS("~/Interpretable-Machine-Learning/aflevering/severity_model.rds")
-# }
-# ____________________________________________
-# 
-# inner_folds <- 2
-# outer_folds <- 2
-# n_evals     <- 1
-# 
-# skim(data_F)
-# 
-# task_freq <- as_task_classif(
-#   data_F,
-#   target = "claim_indicator",
-#   positive = "1",
-#   weights = data_F$Exposure,
-#   id = "frek_classif"
-# )
-# 
-# # stratificer tjek at det faktisk er hvad der sker her
-# task_freq$col_roles$stratum = "claim_indicator"
-# 
-# 
-# graph_freq <- po("encode") %>>%
-#   po("scale") %>>%
-#   lrn("classif.xgboost",
-#       predict_type = "prob",
-#       eval_metric = "logloss",
-#       nrounds      = to_tune(200, 800),
-#       max_depth    = to_tune(3, 7),
-#       eta          = to_tune(0.01, 0.3),
-#       subsample    = to_tune(0.6, 1)
-#       )
-# 
-# at_inner <- auto_tuner(
-#   learner = as_learner(graph_freq),
-#   resampling = rsmp("cv", folds = inner_folds),
-#   measure = msr("classif.bbrier"),
-#   tuner = tnr("random_search"),
-#   term_evals = n_evals
-# )
-# 
-# outer_rsmp <- rsmp("cv", folds = outer_folds)
-# 
-# rr <- resample(
-#   task         = task_freq,
-#   learner      = at_inner,
-#   resampling   = outer_rsmp,
-#   store_models = TRUE
-# )
 
-kør_igen <- "Nej"
+data_F <- data_trans
+data_F <- data_F %>%
+  dplyr::select(-Cost_claim_this_year, - ID)
 
-if (!file.exists("~/Interpretable-Machine-Learning/aflevering/frekvens_model.rds" ) | kør_igen == "ja") {
-  rr <- resample(
-  task         = task_freq,
-  learner      = at_inner,
-  resampling   = outer_rsmp,
-  store_models = TRUE
+
+folds_inner <- 2
+folds_outer <- 2
+n_evals     <- 1
+
+
+skim(data_F)
+
+task_freq <- as_task_classif(
+  data_F,
+  target = "claim_indicator",
+  positive = "1",
+  weights = data_F$Exposure,
+  id = "frek_classif"
 )
-  saveRDS(rr, "~/Interpretable-Machine-Learning/aflevering/frekvens_model.rds")
-} else {
-  rr = readRDS("~/Interpretable-Machine-Learning/aflevering/frekvens_model.rds")
+
+# stratificer tjek at det faktisk er hvad der sker her
+task_freq$col_roles$stratum = "claim_indicator"
+
+
+prep_graph = po("encode") %>>%
+  po("scale")
+
+g_featureless_f =
+  prep_graph %>>%
+  po("learner", lrn("classif.featureless", predict_type = "prob"))
+
+g_rf_f = po("encode") %>>%
+  po("learner", lrn("classif.ranger", predict_type = "prob"))
+
+
+g_lgbm_f =
+  prep_graph %>>%
+  po("learner",
+     lrn("classif.lightgbm",
+         objective              = "binary",
+         learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
+         num_leaves             = to_tune(16L, 32L),
+         num_iterations         = to_tune(200L, 1000L))
+  )
+
+g_xgb_f =
+  prep_graph %>>%
+  po("learner",
+     lrn("classif.xgboost",
+      predict_type = "prob",
+      eval_metric = "logloss",
+      nrounds      = to_tune(200, 800),
+      max_depth    = to_tune(3, 7),
+      eta          = to_tune(0.01, 0.3),
+      subsample    = to_tune(0.6, 1)
+  ))
+
+g_enet_f =
+  prep_graph %>>%
+  po("learner",
+     lrn("classif.glmnet", predict_type = "prob",
+         alpha = to_tune(0, 1),
+         s     = to_tune(1e-4, 1, logscale = TRUE))
+  )
+
+
+auto = function(graph, id)
+{
+  at = AutoTuner$new(
+    learner = GraphLearner$new(graph, id = id),
+    resampling = rsmp("cv", folds = 2),
+    measure = msr("classif.bbrier"),
+    tuner = tnr("random_search"),
+    terminator = trm("evals", n_evals = 1)
+  )
+  invisible(at)
 }
 
-# 
-# 
-# ########## START: Tjekker Stratum fungerer i outer loop
-# 
-# # Loop through outer folds
-# 
-# # for (i in unique(outer_instance$fold)) {
-# #   train_ids <- outer_instance[fold == i, row_id]
-# #   
-# #   cat(sprintf("\nOuter Fold %d:\n", i))
-# #   cat("Train class distribution:\n")
-# #   print(prop.table(table(data_F[train_ids]$claim_indicator)))
-# # }
-# ########## SLUT: Tjekker Stratum fungerer i outer loop 
-# 
-# ##Hvordan tjekker vi inner loop distribution?
+at_lgbm_f = auto(g_lgbm_f, "lgbm")
+at_xgb_f = auto(g_xgb_f, "xgb")
+at_enet_f = auto(g_enet_f, "enet")
+at_featureless_f = auto(g_featureless_f, "featureless")
+at_rf_f = auto(g_rf_f, "ranger")
+
+
+tasks_f = list(task_freq)
+learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f, at_rf_f)
+design_f = benchmark_grid(task = tasks_f, learners = learners_f,
+                        resampling = rsmp("cv", folds = 2))
+
+kør_igen <- "nej"
+
+
+if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens.rds" ) | kør_igen == "ja") {
+  bmr_f = benchmark(design_f, store_models = TRUE)
+  saveRDS(bmr_f, "~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens.rds")
+} else {
+  bmr_f = readRDS("~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens.rds")
+}
+
+
+```
+
+```{r boxplot_frek_kun,  fig.cap = "MSE boxplot", echo = FALSE}
+
+autoplot(bmr_f, measure = msr("classif.bbrier"), type = "boxplot")
 
 ```
 
@@ -783,22 +713,23 @@ Overall we note that our model seems stable through the cross-validation and tha
 
 
 ```{r , fig.cap = "the bbrier error for each choice of probability threshold in classification", echo = FALSE}
-
 #Skal vi helt droppe denne?
 #autoplot(ncs_plot_dat[[1]], type = "threshold", measure = msr("classif.acc"))
 
 ```
+
 Here we see the *acc* error based on the choosen probability threshold, which as expected shows that for example a threshold at $0.5$ results in a pretty good model.
 By setting the threshold higher we could risk introducing more false negatives.
 
 Next we look at the severity model.
-```{r, echo = FALSE, results=FALSE, cache=TRUE, cache.rebuild=TRUE}
+```{r, echo = FALSE, results=FALSE}
 
-data_S <- data_trans(data)
-
+data_S <- data_trans
 data_S <- data_S %>% dplyr::select(-claim_indicator, -ID)
 data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
+data_S <- data_S %>% mutate(Cost_claim_this_year = log(Cost_claim_this_year))
 
+hist(data_S$Cost_claim_this_year)
 
 folds_inner <- 2
 folds_outer <- 2
@@ -815,18 +746,15 @@ task_S = as_task_regr(
 prep_graph = po("encode") %>>%
   po("scale")
 
-g_featureless =
+g_featureless_s =
   prep_graph %>>%
   po("learner",
      lrn("regr.featureless")
   )
 
 
-g_rf = po("encode") %>>%
-  po("learner", lrn("regr.ranger"))
 
-
-g_lgbm =
+g_lgbm_s =
   prep_graph %>>%
   po("learner",
      lrn("regr.lightgbm",
@@ -844,7 +772,7 @@ g_xgb =
          objective              = "reg:gamma",
          eta                    = to_tune(1e-3, 0.2, logscale = TRUE),
          max_depth              = to_tune(3L, 9L),
-         nrounds                = to_tune(200L, 1000L))              
+         nrounds                = to_tune(200L, 1000L))
   )
 
 g_enet =
@@ -852,7 +780,7 @@ g_enet =
   po("learner",
      lrn("regr.glmnet",
          alpha = to_tune(0, 1),
-         s     = to_tune(1e-4, 1, logscale = TRUE))   
+         s     = to_tune(1e-4, 1, logscale = TRUE))
   )
 
 
@@ -860,9 +788,9 @@ auto = function(graph, id)
 {
   at = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
-    resampling = rsmp("cv", folds = 2), 
-    measure = msr("regr.mse"), 
-    tuner = tnr("random_search"), 
+    resampling = rsmp("cv", folds = 2),
+    measure = msr("regr.mse"),
+    tuner = tnr("random_search"),
     terminator = trm("evals", n_evals = 1)
   )
   invisible(at)
@@ -872,22 +800,21 @@ at_lgbm = auto(g_lgbm, "lgbm")
 at_xgb = auto(g_xgb, "xgb")
 at_enet = auto(g_enet, "enet")
 at_featureless = auto(g_featureless, "featureless")
-at_rf = auto(g_rf, "featureless")
 
 
-task = list(task_S)
-learners = list(at_lgbm, at_xgb, at_enet, at_featureless, g_rf)
-design = benchmark_grid(task = task, learners = learners, 
+tasks_s = list(task_S)
+learners_s = list(at_lgbm, at_xgb, at_enet, at_featureless)
+design_s = benchmark_grid(task = tasks_s, learners = learners_s,
                         resampling = rsmp("cv", folds = 2))
 
-kør_igen <- "Nej"
+kør_igen <- "nej"
 
 
-if (!file.exists("~/Interpretable-Machine-Learning/aflevering/severity_model.rds" ) | kør_igen == "ja") {
+if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_severity.rds" ) | kør_igen == "ja") {
   bmr_s = benchmark(design, store_models = TRUE)
-  saveRDS(bmr_s, "~/Interpretable-Machine-Learning/aflevering/severity_model.rds")
+  saveRDS(bmr_s, "~/Interpretable-Machine-Learning/aflevering/benchmark_severity.rds")
 } else {
-  bmr_s = readRDS("~/Interpretable-Machine-Learning/aflevering/severity_model.rds")
+  bmr_s = readRDS("~/Interpretable-Machine-Learning/aflevering/benchmark_severity.rds")
 }
 
 
@@ -911,31 +838,31 @@ We have shown that our models are somewhat acceptable, and we not fit them on th
 final_eval <- FALSE
 
 if (final_eval) {
-  DATA <- data_trans(data)
+  DATA <- data_trans
   N <- nrow(DATA)
   train_idx <- sample(seq_len(N), size = 0.8 * N)
-  
+
   train <- DATA[train_idx, ]
   test <- DATA[-train_idx, ]
-  
+
   #Funktion train_freq findes i "train_predict_submit"
   frekvens_model <- train_freq(train, folds = 2, n_evals = 1)
-  
+
   #Funktion train_severity findes i "train_predict_submit"
   skades_model <- train_severity(train, folds = 2, n_evals = 1)
-  
-  
+
+
   E_N <- frekvens_model$predict_newdata(test)
   E_X <- skades_model$predict_newdata(test)
-  
+
   res <- tibble(
     E_N = E_N$prob[, 1],
     E_X =  E_X$response
     )
-  
+
   res <- res %>% dplyr::mutate(predicted = E_N * E_X )
-  
-  
+
+
   plot(res$predicted, test$Cost_claim_this_year)
   print(mse_oos <- mean((res$predicted-test$Cost_claim_this_year)^2))
 }
@@ -966,21 +893,6 @@ In the severity model, we severly miss the tail of the distribution.
 We did nested cross-validation, but we could have increased the iterations and the number of folds for more stable results.
 For severity we could have chosen a better metric to optimize for, which will hopefully result in a better model, especially in the tail.
 We could have fit an EVT distribution on the heavy tailed data, but again this is quite strenious for this assignment.
-
-
-
-
-
-<!-- ```{r} -->
-<!-- rmd <- knitr::opts_knit$get("input.file") %||% knitr::current_input() -->
-<!-- stopifnot(!is.null(rmd) && nzchar(rmd)) -->
-<!-- tmp <- knitr::purl(input = rmd, -->
-<!--                    output = tempfile(fileext = ".R"), -->
-<!--                    documentation = 0, quiet = TRUE) -->
-<!-- code_lines <- readLines(tmp, warn = FALSE, encoding = "UTF-8") -->
-<!-- cat("```r\n", paste(code_lines, collapse = "\n"), "\n```") -->
-<!-- ``` -->
-
 
 
 
