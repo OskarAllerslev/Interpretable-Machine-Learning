@@ -540,7 +540,7 @@ combined_graph$plot()
 
 ```
 
-The results of the nested cross-validation are shown in \ref{fig:boxplot_kun}. 
+The results of the nested cross-validation are shown in \ref{fig:boxplot_tweedie_kun}. 
 
 ```{r boxplot_tweedie_kun,  fig.cap = "MSE boxplot", echo = FALSE}
 
@@ -716,23 +716,23 @@ We use $K = 2$ folds in both the inner and outer loops.
 Next we look at some model diagnostics.
 We can look at the combined *bbrier* score for the aggregated model:
 ```{r, echo = FALSE}
-print(rr$aggregate(msr("classif.bbrier")))
+#print(rr$aggregate(msr("classif.bbrier")))
 ```
 which seems quite small.
 Further we have some confusion matrices for each of the folds.
 ```{r, echo = FALSE}
 
-ncs_plot_dat <- rr$predictions()
-
-for (i in 1:length(ncs_plot_dat)){
-  cat("Fold: ", i)
-  print(mlr3measures::confusion_matrix(
-    truth = ncs_plot_dat[[i]]$truth,
-    response = ncs_plot_dat[[i]]$response,
-    positive = "1"
-
-  ))
-}
+# ncs_plot_dat <- rr$predictions()
+# 
+# for (i in 1:length(ncs_plot_dat)){
+#   cat("Fold: ", i)
+#   print(mlr3measures::confusion_matrix(
+#     truth = ncs_plot_dat[[i]]$truth,
+#     response = ncs_plot_dat[[i]]$response,
+#     positive = "1"
+# 
+#   ))
+#}
 
 
 ```
@@ -759,8 +759,6 @@ data_S <- data_trans
 data_S <- data_S %>% dplyr::select(-claim_indicator, -ID)
 data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
 data_S <- data_S %>% mutate(Cost_claim_this_year = log(Cost_claim_this_year))
-
-hist(data_S$Cost_claim_this_year)
 
 folds_inner <- 2
 folds_outer <- 2
@@ -796,7 +794,7 @@ g_lgbm_s =
   )
 
 
-g_xgb =
+g_xgb_s =
   prep_graph %>>%
   po("learner",
      lrn("regr.xgboost",
@@ -806,7 +804,7 @@ g_xgb =
          nrounds                = to_tune(200L, 1000L))
   )
 
-g_enet =
+g_enet_s =
   prep_graph %>>%
   po("learner",
      lrn("regr.glmnet",
@@ -817,24 +815,24 @@ g_enet =
 
 auto = function(graph, id)
 {
-  at = AutoTuner$new(
+  at_s = AutoTuner$new(
     learner = GraphLearner$new(graph, id = id),
     resampling = rsmp("cv", folds = 2),
     measure = msr("regr.mse"),
     tuner = tnr("random_search"),
     terminator = trm("evals", n_evals = 1)
   )
-  invisible(at)
+  invisible(at_s)
 }
 
-at_lgbm = auto(g_lgbm, "lgbm")
-at_xgb = auto(g_xgb, "xgb")
-at_enet = auto(g_enet, "enet")
-at_featureless = auto(g_featureless, "featureless")
+at_lgbm_s = auto(g_lgbm_s, "lgbm")
+at_xgb_s = auto(g_xgb_s, "xgb")
+at_enet_s = auto(g_enet_s, "enet")
+at_featureless_s = auto(g_featureless_s, "featureless")
 
 
 tasks_s = list(task_S)
-learners_s = list(at_lgbm, at_xgb, at_enet, at_featureless)
+learners_s = list(at_lgbm_s, at_xgb_s, at_enet_s, at_featureless_s)
 design_s = benchmark_grid(task = tasks_s, learners = learners_s,
                         resampling = rsmp("cv", folds = 2))
 
@@ -864,7 +862,7 @@ Then we can combine the models, and calculate the mean square error for the comb
 We have shown that our models are somewhat acceptable, and we not fit them on the entire dataset and find the out of sample *MSE* for $20$ percent of data.
 
 
-```{r , fig.cap="Predicted vs. actual", echo = FALSE,message = FALSE, warning = FALSE, results = 'hold' }
+```{r , fig.cap="Predicted vs. actual", echo = FALSE}
 
 final_eval <- FALSE
 
