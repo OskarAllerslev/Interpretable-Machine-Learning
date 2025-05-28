@@ -113,27 +113,8 @@ knitr::opts_chunk$set(
     ), by = key_vars]
 
 
-   # agg <- agg %>%
-   #   dplyr::mutate(
-   #    dist_channel_0          = dplyr::if_else(Distribution_channel == "0", 1, 0),
-   #    dist_channel_1          = dplyr::if_else(Distribution_channel == "1", 1, 0),
-   #    dist_channel_2          = dplyr::if_else(!(Distribution_channel %in% c("0", "1")), 1, 0)
-   #   )
-
-
     agg <- agg %>%
       dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
-
-    # tmp <- agg %>%
-    #   dplyr::filter(is.na(Type_fuel))
-    #
-    # NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
-    # total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
-    #
-    # na_Y_ratio <- NA_fuel_Y / total_Y
-
-    # agg <- agg %>%
-    #   dplyr::filter(!is.na(Type_fuel))
 
     # impute the data
     agg <- agg %>%
@@ -166,12 +147,6 @@ knitr::opts_chunk$set(
 
 
 ```
-
-
-
-
-
-
 
 
 ```{r, echo = FALSE, results = FALSE, warnings = FALSE}
@@ -376,57 +351,6 @@ We do stratified resampling in both the inner and outer cv loops, to ensure both
 I final note, that goes for all our trained models, is that we introduce offset on the exposure. Meaning: Give more importance to observations with more exposure since they represent more information. 
 
 
-
-SLETTES??
-
-<!-- ```{r, echo = FALSE, results = FALSE} -->
-<!-- data_twd <- data_trans(data) -->
-
-<!-- task_twd = as_task_regr(data_twd, target = "Cost_claim_this_year", -->
-<!--                         id = "tweedie") -->
-
-
-
-<!-- graph_twd = po("encode") %>>% -->
-<!--   po("scale") %>>% -->
-<!--   po("learner", lrn("regr.lightgbm", -->
-<!--     objective              = "tweedie", -->
-<!--     tweedie_variance_power = to_tune(1, 1.9), -->
-<!--     learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE), -->
-<!--     num_leaves             = to_tune(16L, 64L), -->
-
-<!--     num_iterations         = to_tune(200L, 1000L) -->
-
-<!--   )) -->
-
-<!-- glrn_twd = GraphLearner$new(graph_twd, id = "tweedie_lgbm") -->
-<!-- resampling = rsmp("cv", folds = 2) -->
-<!-- tuner = tnr("random_search") -->
-<!-- terminator = trm("evals", n_evals = 1) -->
-<!-- measure = msr("regr.mse") -->
-
-
-
-<!-- at_twd = AutoTuner$new( -->
-<!--   learner    = glrn_twd, -->
-<!--   resampling = resampling, -->
-<!--   measure    = measure, -->
-<!--   terminator = terminator, -->
-<!--   tuner      = tuner -->
-<!-- ) -->
-
-
-<!-- if (!file.exists("auto_tuner_tweedie.rds")) { -->
-<!--   at_twd$train(task_twd) -->
-<!--   saveRDS(at_twd, "auto_tuner_tweedie.rds") -->
-<!-- } else { -->
-<!--   at_twd <- readRDS("auto_tuner_tweedie.rds") -->
-<!-- } -->
-
-<!-- at_twd$archive  -->
-
-<!-- ``` -->
-
 ```{r, echo = FALSE, results = FALSE}
 
 prep_graph = po("encode") %>>%
@@ -507,7 +431,6 @@ if (!file.exists("benchmark_tweedie.rds")) {
   bmr = readRDS("benchmark_tweedie.rds")
 }
 
-
 ```
 
 
@@ -533,9 +456,6 @@ gt::gt(tibble::tibble(
   )
   )
 
-
-
-
 ```
 
 We define the workflow as 
@@ -543,14 +463,6 @@ We define the workflow as
 library(DiagrammeR)
 
 #library(patchwork)
-
-# p1 <- g_featureless$plot()
-# p2 <- g_lgbm$plot()
-# p3 <- g_xgb$plot()
-# p4 <- g_enet$plot()
-
-# ved ikke lige hvordan man skal plotte det her
-# Combine learners in parallel using gunion
 
 # Individual learners
 featureless_learner = po("learner", lrn("regr.featureless", id = "featureless"))
@@ -580,49 +492,27 @@ autoplot(bmr, measure = msr("regr.mse"), type = "boxplot")
 
 
 
+
+
+
+######## ret dette til 
+
 We minimize the mse, and find that the optimal variance power through cross-validation is approximately $1.82$. This makes the tweedie a compound Poisson-Gamma. 
 
 The random search is not optimal, and one could have used a better optimization algorithm.
 We can look at the model fit, on the whole dataset.
 
 
-____________________________________________________________________
-?? Skal vi have residualplot/histogram for vores bedste tweedie-model ovenfor?
-
-____________________________________________________________________
-
-```{r , fig.cap= "Residual plot, histogram for residuals, QQ-plot", echo = FALSE}
-
-# twd_p1 <- mlr3verse::autoplot(at_lgbm$predict(task_twd), type = "residual")
-# twd_p2 <- mlr3verse::autoplot(at_lgbm$predict(task_twd), type = "histogram")
-# 
-# plot_twd_dat <- tibble::tibble(
-# resp = at_twd$predict(task_twd)$response,
-# truth = at_twd$predict(task_twd)$truth
-# )
-# 
-# 
-# 
-# twd_p3 <- qqplot(x = plot_twd_dat$resp, y = plot_twd_dat$truth)
-# abline(a = 0,b = 1)
-# 
-# 
-# par(mfrow = c(1,2))
-# twd_p1
-# twd_p2
-
-```
-
 This fit is somewhat disappointing since we severely underestimate the larger claims.
 It is also evident that our data is very heavy tailed, and the tweedie does not fully capture the more extreme events.
 
 ##### Split model
 Next we can look at the split model proposed in the mathematical frame, where we aim to create two models, and then predict in the following manner:
-$$
+
 \begin{align*}
 1\{P(N > 0 \mid Z) > t\}\cdot  E(X \mid Z)
 \end{align*}
-$$
+
 Which is unlike the traditional and proposed $E(N)E(X)$, but since we are asked to predict the next year, we feel like we can provide a suitable approximation with the above prediction.
 This entails fitting both a frequency model and a severity model.
 Hence we begin with the frequency regression model.
@@ -666,13 +556,13 @@ graph_freq <- po("encode") %>>%
 
 at_inner <- auto_tuner(
   learner = as_learner(graph_freq),
-  resampling = rsmp("cv", folds = inner_folds, stratify = TRUE),
+  resampling = rsmp("cv", folds = inner_folds),
   measure = msr("classif.bbrier"),
   tuner = tnr("random_search"),
   term_evals = n_evals
 )
 
-outer_rsmp <- rsmp("cv", folds = outer_foldsm, stratify = TRUE)
+outer_rsmp <- rsmp("cv", folds = outer_folds)
 
 rr <- resample(
   task         = task_freq,
@@ -680,8 +570,6 @@ rr <- resample(
   resampling   = outer_rsmp,
   store_models = TRUE
 )
-
-?rsmp
 
 ```
 We have fitted the model with nested cross-validation since it provides a more stable estimate of the generalisation error.
@@ -724,182 +612,182 @@ autoplot(ncs_plot_dat[[1]], type = "threshold", measure = msr("classif.acc"))
 Here we see the *acc* error based on the choosen probability threshold, which as expected shows that for example a threshold at $0.5$ results in a pretty good model.
 By setting the threshold higher we could risk introducing more false negatives.
 
-Next we look at the severity model.
-```{r, echo = FALSE, results=FALSE, cache=TRUE, cache.rebuild=TRUE}
+<!-- Next we look at the severity model. -->
+<!-- ```{r, echo = FALSE, results=FALSE, cache=TRUE, cache.rebuild=TRUE} -->
 
-data_S <- data_trans(data)
+<!-- data_S <- data_trans(data) -->
 
-data_S <- data_S %>% dplyr::select(-claim_indicator)
-data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
+<!-- data_S <- data_S %>% dplyr::select(-claim_indicator) -->
+<!-- data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0) -->
 
-data_S_imputed <- data_S %>%
-  # 1) Sæt Inf → NA for alle numeriske kolonner
-  mutate(across(
-    where(is.numeric),
-    ~ ifelse(is.infinite(.x), NA, .x)
-  )) %>%
-  # 2) Imputer hver kolonne; for integer kolonner rundes mean() af til integer
-  mutate(
-    across(
-      .cols = where(is.integer),
-      .fns  = ~ replace_na(
-        .x,
-        as.integer(round(mean(.x, na.rm = TRUE)))
-      )
-    ),
-    across(
-      .cols = where(is.double),
-      .fns  = ~ replace_na(
-        .x,
-        mean(.x, na.rm = TRUE)
-      )
-    )
-  )
+<!-- data_S_imputed <- data_S %>% -->
+<!--   # 1) Sæt Inf → NA for alle numeriske kolonner -->
+<!--   mutate(across( -->
+<!--     where(is.numeric), -->
+<!--     ~ ifelse(is.infinite(.x), NA, .x) -->
+<!--   )) %>% -->
+<!--   # 2) Imputer hver kolonne; for integer kolonner rundes mean() af til integer -->
+<!--   mutate( -->
+<!--     across( -->
+<!--       .cols = where(is.integer), -->
+<!--       .fns  = ~ replace_na( -->
+<!--         .x, -->
+<!--         as.integer(round(mean(.x, na.rm = TRUE))) -->
+<!--       ) -->
+<!--     ), -->
+<!--     across( -->
+<!--       .cols = where(is.double), -->
+<!--       .fns  = ~ replace_na( -->
+<!--         .x, -->
+<!--         mean(.x, na.rm = TRUE) -->
+<!--       ) -->
+<!--     ) -->
+<!--   ) -->
 
 
 
 
-folds_inner <- 5
-folds_outer <- 5
-n_evals     <- 5
+<!-- folds_inner <- 5 -->
+<!-- folds_outer <- 5 -->
+<!-- n_evals     <- 5 -->
 
 
-task_S = as_task_regr(
-  data_S_imputed,
-  target = "Cost_claim_this_year",
-  weights = data_S$Exposure,
-  id     = "skade"
-)
+<!-- task_S = as_task_regr( -->
+<!--   data_S_imputed, -->
+<!--   target = "Cost_claim_this_year", -->
+<!--   weights = data_S$Exposure, -->
+<!--   id     = "skade" -->
+<!-- ) -->
 
 
-graph_S = po("encode") %>>%
-  po("learner", lrn("regr.ranger"))
+<!-- graph_S = po("encode") %>>% -->
+<!--   po("learner", lrn("regr.ranger")) -->
 
 
 
 
-graph_S <- po("imputeoor") %>>%
-           po("encode")    %>>%
-           po("scale")     %>>%
-           po("learner",
-              lrn("regr.lightgbm",
-                  objective       = "quantile",
-                  alpha           = 0.85
-              ))
+<!-- graph_S <- po("imputeoor") %>>% -->
+<!--            po("encode")    %>>% -->
+<!--            po("scale")     %>>% -->
+<!--            po("learner", -->
+<!--               lrn("regr.lightgbm", -->
+<!--                   objective       = "quantile", -->
+<!--                   alpha           = 0.85 -->
+<!--               )) -->
 
 
 
-glrn_S <- GraphLearner$new(graph_S)
+<!-- glrn_S <- GraphLearner$new(graph_S) -->
 
 
-inner_tuner_S = AutoTuner$new(
-  learner    = glrn_S,
-  resampling = rsmp("cv", folds = folds_inner),
-  measure    = msr("regr.mse"),
-  tuner      = tnr("random_search"),
-  terminator = trm("evals", n_evals = n_evals)
-)
+<!-- inner_tuner_S = AutoTuner$new( -->
+<!--   learner    = glrn_S, -->
+<!--   resampling = rsmp("cv", folds = folds_inner), -->
+<!--   measure    = msr("regr.mse"), -->
+<!--   tuner      = tnr("random_search"), -->
+<!--   terminator = trm("evals", n_evals = n_evals) -->
+<!-- ) -->
 
-outer_cv <- rsmp("cv", folds = folds_outer)
-rr_S <- resample(
-  task_S,
-  inner_tuner_S,
-  outer_cv
-)
+<!-- outer_cv <- rsmp("cv", folds = folds_outer) -->
+<!-- rr_S <- resample( -->
+<!--   task_S, -->
+<!--   inner_tuner_S, -->
+<!--   outer_cv -->
+<!-- ) -->
 
 
-rr_S$aggregate(msr("regr.mse"))
+<!-- rr_S$aggregate(msr("regr.mse")) -->
 
 
-```
+<!-- ``` -->
 
 
-```{r , fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis", echo = FALSE}
+<!-- ```{r , fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis", echo = FALSE} -->
 
 
 
-autoplot(rr_S$prediction(), type = "xy")
-autoplot(rr_S$prediction(), type = "residual")
+<!-- autoplot(rr_S$prediction(), type = "xy") -->
+<!-- autoplot(rr_S$prediction(), type = "residual") -->
 
-```
+<!-- ``` -->
 
 
-Then we can combine the models, and calculate the mean square error for the combined model.
-We have shown that our models are somewhat acceptable, and we not fit them on the entire dataset and find the out of sample *MSE* for $20$ percent of data.
+<!-- Then we can combine the models, and calculate the mean square error for the combined model. -->
+<!-- We have shown that our models are somewhat acceptable, and we not fit them on the entire dataset and find the out of sample *MSE* for $20$ percent of data. -->
 
 
-```{r , fig.cap="Predicted vs. actual", echo = FALSE,message = FALSE, warning = FALSE, results = 'hold' }
+<!-- ```{r , fig.cap="Predicted vs. actual", echo = FALSE,message = FALSE, warning = FALSE, results = 'hold' } -->
 
-DATA <- data_trans(data)
-N <- nrow(DATA)
-train_idx <- sample(seq_len(N), size = 0.8 * N)
+<!-- DATA <- data_trans(data) -->
+<!-- N <- nrow(DATA) -->
+<!-- train_idx <- sample(seq_len(N), size = 0.8 * N) -->
 
-train <- DATA[train_idx, ]
-test <- DATA[-train_idx, ]
+<!-- train <- DATA[train_idx, ] -->
+<!-- test <- DATA[-train_idx, ] -->
 
 
-frekvens_model <- train_freq(train, folds = 2, n_evals = 2)
+<!-- frekvens_model <- train_freq(train, folds = 2, n_evals = 2) -->
 
 
-skades_model <- train_severity(train, folds = 2, n_evals = 2)
+<!-- skades_model <- train_severity(train, folds = 2, n_evals = 2) -->
 
 
-E_N <- frekvens_model$predict_newdata(test)
-E_X <- skades_model$predict_newdata(test)
+<!-- E_N <- frekvens_model$predict_newdata(test) -->
+<!-- E_X <- skades_model$predict_newdata(test) -->
 
-res <- tibble(
-  E_N = E_N$prob[, 1],
-  E_X =  E_X$response
-  )
+<!-- res <- tibble( -->
+<!--   E_N = E_N$prob[, 1], -->
+<!--   E_X =  E_X$response -->
+<!--   ) -->
 
-res <- res %>% dplyr::mutate(predicted = E_N * E_X )
+<!-- res <- res %>% dplyr::mutate(predicted = E_N * E_X ) -->
 
 
-plot(res$predicted, test$Cost_claim_this_year)
-print(mse_oos <- mean((res$predicted-test$Cost_claim_this_year)^2))
+<!-- plot(res$predicted, test$Cost_claim_this_year) -->
+<!-- print(mse_oos <- mean((res$predicted-test$Cost_claim_this_year)^2)) -->
 
 
 
-```
-We see here that our final model for the combined model.
-It is clear that both our models perform extremely poorly, and one should probably have split up the claims into small and large claims so we could model the large and small claims independently.
-Since both models are somewhat lacking we stick with the split model, since this is more common in the actuarial business.
+<!-- ``` -->
+<!-- We see here that our final model for the combined model. -->
+<!-- It is clear that both our models perform extremely poorly, and one should probably have split up the claims into small and large claims so we could model the large and small claims independently. -->
+<!-- Since both models are somewhat lacking we stick with the split model, since this is more common in the actuarial business. -->
 
 
 
 
-## Discussion
-Here we touch upon the various modeling problems.
-##### Pre-processing
-We took a somewhat minimalist approach: obvious date parsing, encoding etc. some slight imputation.
-Since we impute, we impute off random values which adds noise.
-We could have used better imputation, and our data aggregation could have been slightly better.
+<!-- ## Discussion -->
+<!-- Here we touch upon the various modeling problems. -->
+<!-- ##### Pre-processing -->
+<!-- We took a somewhat minimalist approach: obvious date parsing, encoding etc. some slight imputation. -->
+<!-- Since we impute, we impute off random values which adds noise. -->
+<!-- We could have used better imputation, and our data aggregation could have been slightly better. -->
 
 
 
-##### Model choices
-In the frequency model, despite the good accuracy, we miss a lot of false negatives.
-In the severity model, we severly miss the tail of the distribution.
+<!-- ##### Model choices -->
+<!-- In the frequency model, despite the good accuracy, we miss a lot of false negatives. -->
+<!-- In the severity model, we severly miss the tail of the distribution. -->
 
-##### Evaluation protocol
+<!-- ##### Evaluation protocol -->
 
-We did nested cross-validation, but we could have increased the iterations and the number of folds for more stable results.
-For severity we could have chosen a better metric to optimize for, which will hopefully result in a better model, especially in the tail.
-We could have fit an EVT distribution on the heavy tailed data, but again this is quite strenious for this assignment.
+<!-- We did nested cross-validation, but we could have increased the iterations and the number of folds for more stable results. -->
+<!-- For severity we could have chosen a better metric to optimize for, which will hopefully result in a better model, especially in the tail. -->
+<!-- We could have fit an EVT distribution on the heavy tailed data, but again this is quite strenious for this assignment. -->
 
 
 
 
 
-```{r}
-rmd <- knitr::opts_knit$get("input.file") %||% knitr::current_input()
-stopifnot(!is.null(rmd) && nzchar(rmd))
-tmp <- knitr::purl(input = rmd,
-                   output = tempfile(fileext = ".R"),
-                   documentation = 0, quiet = TRUE)
-code_lines <- readLines(tmp, warn = FALSE, encoding = "UTF-8")
-cat("```r\n", paste(code_lines, collapse = "\n"), "\n```")
-```
+<!-- ```{r} -->
+<!-- rmd <- knitr::opts_knit$get("input.file") %||% knitr::current_input() -->
+<!-- stopifnot(!is.null(rmd) && nzchar(rmd)) -->
+<!-- tmp <- knitr::purl(input = rmd, -->
+<!--                    output = tempfile(fileext = ".R"), -->
+<!--                    documentation = 0, quiet = TRUE) -->
+<!-- code_lines <- readLines(tmp, warn = FALSE, encoding = "UTF-8") -->
+<!-- cat("```r\n", paste(code_lines, collapse = "\n"), "\n```") -->
+<!-- ``` -->
 
 
 
