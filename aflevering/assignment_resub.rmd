@@ -802,18 +802,13 @@ if (!file.exists("~/Interpretable-Machine-Learning/aflevering/severity_model.rds
 }
 
 
-rr_S$aggregate(msr("regr.mse"))
-
-
 ```
 
 
 ```{r , fig.cap = "Shows the predicted values along the x-axis vs the real values on the y-axis", echo = FALSE}
 
+autoplot(bmr_s, measure = msr("regr.mse"), type = "boxplot")
 
-
-autoplot(rr_S$prediction(), type = "xy")
-autoplot(rr_S$prediction(), type = "residual")
 
 ```
 
