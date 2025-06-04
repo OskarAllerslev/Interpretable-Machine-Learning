@@ -189,7 +189,7 @@ There are several issues with this, since some contracts might overlap into mult
 There are numerous char. vectors in the data, which can be seen here:
 ```{r, echo = FALSE, out.width="50%"}
 print(str(data))
-
+summary(data)
 ```
 One could, model some of the char. vectors like proposed in the lectures, by
 
