@@ -1,9 +1,10 @@
 
 
 # pakker ------------------------------------------------------------------
-
-
-
+library(ALEPlot)
+library(fastshap)
+library(iml)
+library(DALEX)
 library(rsample)
 library(DiagrammeR)
 library(gt)
@@ -499,6 +500,247 @@ cat("Sev log mse ",sev_mse, " classif bbrier ", classif_bbrier )
 # explain interpretable model ---------------------------------------------
 
 
+best_freq_mod <- best_at_f$train(task_freq)
+best_sev_mod <- best_at_s$train(task_S)
+best_at_f$learner_model
+
+
+X_freq <- as.data.frame(task_freq$data(cols = best_at_f$feature_names))
+y_freq <- task_freq$truth()
+
+X_sev  <- as.data.frame(task_S$data(cols = best_at_s$feature_names))
+y_sev  <- task_S$truth()
+
+## global feature-importance ----
+
+expl_freq <- DALEX::explain(best_freq_mod, 
+                            data = X_freq, 
+                            y = y_freq, 
+                            label = "XGB", 
+                            weights = task_freq$weights$weight)
+imp_freq <- DALEX::model_parts(expl_freq, type = "raw")
+plot(imp_freq) 
+
+### det her virker ikke rigtigt 
+
+
+expl_sev  <- explain_mlr3(best_sev_mod,
+                          data    = X_sev,
+                          y       = y_sev,
+                          label   = "Ranger",
+                          weights = task_S$weights$weight)
+imp_sev   <- model_parts(expl_sev, type = "raw")
+plot(imp_sev) 
+
+
+
+
+
+
+## shap-values local & global ----
+
+
+#### shapley local for one person ----
+predictor_freq <- Predictor$new(best_freq_mod,
+                                data = X_freq,
+                                y    = y_freq,
+                                type = "prob")  
+
+# udvalgt person
+shap_freq <- Shapley$new(predictor_freq, x.interest = X_freq[1, ])
+plot(shap_freq)                                
+
+
+#### shaples for frek ----
+# pfun <- function(object, newdata) {
+#   pred <- object$predict_newdata(newdata)  
+#   as.numeric(pred$prob[, 2])
+# }
+# 
+# 
+# sh_freq <- fastshap::explain(
+#   object       = best_freq_mod,
+#   X            = as.data.frame(X_freq), 
+#   pred_wrapper = pfun,
+#   nsim         = 500,                    
+#   adjust       = TRUE                     
+# )
+
+
+
+
+#### shapley local for one person ----
+
+predictor_sev <- Predictor$new(best_sev_mod,
+                               data = X_sev,
+                               y    = y_sev)
+
+shap_sev <- Shapley$new(predictor_sev, x.interest = X_sev[1, ])
+plot(shap_sev)
+
+
+#### shaples for sev ----
+# pfun_sev <- function(object, newdata) {
+#   object$predict_newdata(newdata)$response  
+# }
+# 
+# sh_sev <- fastshap::explain(
+#   best_sev_mod,
+#   X = as.data.frame(X_sev),
+#   pred_wrapper = pfun_sev,
+#   nsim = 500
+# )
+
+
+
+
+
+
+## PDP og ICE  ----
+predictor_freq <- Predictor$new(
+  model = expl_freq$model,
+  data  = X_freq,
+  y     = y_freq,
+  predict.function = function(m, d) {
+    predict(expl_freq, newdata = d, type = "prob")[, 2]   # P(y = 1)
+  },
+  class = "classification"
+)
+
+## 2.2  PDP + ICE for én variabel (fx Cost_claims_sum_history)
+eff_freq <- FeatureEffect$new(
+  predictor = predictor_freq,
+  feature   = "Cost_claims_sum_history",   # brug præcis navn i X_freq
+  method    = "pdp+ice"
+)
+
+p_freq <- plot(eff_freq) +
+  ggtitle("Frequency – PDP + ICE for Cost_claims_sum_history")
+
+
+## ale plots ----
+
+
+######################################## frek ale 
+best_par <- as.list(best_at_f$tuning_result$x)
+
+final_xgb <- lrn(
+  "classif.xgboost",
+  predict_type = "prob",
+  eval_metric  = "logloss",
+  max_depth    = 1,                                   # fast fra din opskrift
+  eta          = best_par[[1]]$classif.xgboost.eta,
+  nrounds      = best_par[[1]]$classif.xgboost.nrounds,
+  subsample    = best_par[[1]]$classif.xgboost.subsample
+)
+
+final_xgb$train(task_freq)
+
+
+
+
+
+X_df <- task_freq$data(cols = final_xgb$feature_names) |> as.data.frame()
+
+j <- which(names(X_df) == "Weight")  # præcis én kolonne
+
+
+
+pred_freq <- function(X.model, newdata) {
+  X.model$predict_newdata(newdata)$prob[, "1"]
+}
+
+ALEPlot(
+  X        = X_df,
+  X.model  = final_xgb,      # Learner
+  pred.fun = pred_freq,
+  J        = j,
+  K        = 40
+)
+
+
+# i could not get it to work with the categorical vars
+num_vars <- names(X_df)[sapply(X_df, is.numeric)]
+
+ale_long <- map_dfr(
+  num_vars,
+  function(v) {
+    j   <- which(names(X_df) == v)
+    tmp <- tempfile(); png(tmp)        
+    ale <- ALEPlot(X_df, final_xgb, pred_freq, J = j, K = 40, NA.plot = TRUE)
+    dev.off(); unlink(tmp)
+    tibble::tibble(
+      variable = v,
+      x        = ale$x.values,        
+      ale      = ale$f.values        
+    )
+  }
+)
+
+
+ggplot(ale_long, aes(x, ale)) +
+  geom_line(linewidth = .6) +
+  facet_wrap(~ variable, scales = "free_x") +
+  geom_hline(yintercept = 0, colour = "grey40", linewidth = .3) +
+  scale_y_continuous(breaks = seq(-.4,.4,.2)) +
+  labs(y = "ALE", x = NULL,
+       title = "ALE-plots") +
+  theme_bw() +
+  theme(strip.text = element_text(size = 8),
+        panel.grid.major.y = element_line(colour = "grey85"),
+        panel.grid.minor.y = element_blank())
+
+########################################## sev ale 
+
+
+
+best_par_s <- as.list(best_at_s$tuning_result$x)
+
+final_ranger <- lrn(
+  "regr.ranger",
+  predict_type   = "response",
+  mtry           = best_par_s[[1]]$regr.ranger.mtry,
+  min.node.size  = best_par_s[[1]]$regr.ranger.min.node.size,
+  num.trees      = best_par_s[[1]]$regr.ranger.num.trees,
+  importance     = "permutation"
+)
+
+final_ranger$train(task_S)               
+
+pred_sev <- function(X.model, newdata) {
+  X.model$predict_newdata(newdata)$response   
+}
+
+X_df  <- task_S$data(cols = final_ranger$feature_names) |> as.data.frame()
+num_vars <- names(X_df)[sapply(X_df, is.numeric)]
+
+ale_long <- map_dfr(
+  num_vars,
+  function(v) {
+    j   <- which(names(X_df) == v)
+    tmp <- tempfile(); png(tmp)          
+    ale <- ALEPlot(X_df, final_ranger, pred_sev,
+                   J = j, K = 40, NA.plot = TRUE)
+    dev.off(); unlink(tmp)
+
+    tibble(
+      variable = v,
+      x        = ale$x.values,
+      ale      = ale$f.values
+    )
+  }
+)
+
+ggplot(ale_long, aes(x, ale)) +
+  geom_line(linewidth = .6) +
+  facet_wrap(~ variable, scales = "free_x") +
+  geom_hline(yintercept = 0, colour = "grey40", linewidth = .3) +
+  labs(title = "ALE-plots",
+       y = "ALE", x = NULL) +
+  theme_bw() +
+  theme(strip.text        = element_text(size = 8),
+        panel.grid.major.y = element_line(colour = "grey85"),
+        panel.grid.minor.y = element_blank())
 
 
 
@@ -506,4 +748,18 @@ cat("Sev log mse ",sev_mse, " classif bbrier ", classif_bbrier )
 
 
 
-  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
