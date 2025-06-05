@@ -148,10 +148,10 @@ library(mlr3verse)
   
 
 # gammel split model ------------------------------------------------------
-
-  
+data <- fread("~/Interpretable-Machine-Learning/aflevering/Motor vehicle insurance data.csv", sep = ";")
+data_t <- data_trans(data)
 ## frek model  ----
-data_F <- data_trans
+data_F <- data_t
 data_F <- data_F %>%
   dplyr::select(-Cost_claim_this_year, - ID)
 
@@ -249,7 +249,7 @@ learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f, at_rf_f)
 design_f = benchmark_grid(task = tasks_f, learners = learners_f,
                         resampling = rsmp("cv", folds = 2))
 
-kør_igen <- "ja"
+kør_igen <- "nej"
 
 
 if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens.rds" ) | kør_igen == "ja") {
@@ -263,7 +263,7 @@ if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens
 ## sev model ---- 
   
 
-data_S <- data_trans
+data_S <- data_t
 data_S <- data_S %>% dplyr::select(-claim_indicator, -ID)
 data_S <- data_S %>% dplyr::filter(Cost_claim_this_year > 0)
 data_S <- data_S %>% mutate(Cost_claim_this_year = log(Cost_claim_this_year))
@@ -392,12 +392,21 @@ at_xgb_f_interp = AutoTuner$new(
 
 outer_rsmp_f = rsmp("cv", folds = 5)            
 
-rr_freq_interp = resample(
-  task       = task_freq,
-  learner    = at_xgb_f_interp,
-  resampling = outer_rsmp_f,
-  store_models = TRUE                          
-)
+kør_igen <- "ja"
+
+if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_frekvens.rds" ) | kør_igen == "ja") {
+  rr_freq_interp = resample(
+    task       = task_freq,
+    learner    = at_xgb_f_interp,
+    resampling = outer_rsmp_f,
+    store_models = TRUE                          
+  )
+  saveRDS(rr_freq_interp, "~/Interpretable-Machine-Learning/aflevering/inte_pretable_frekvens.rds")
+} else {
+  rr_freq_interp = readRDS("~/Interpretable-Machine-Learning/aflevering/inte_pretable_frekvens.rds")
+}
+
+
 
 classif_bbrier <- rr_freq_interp$aggregate(msr("classif.bbrier"))
 
@@ -426,10 +435,6 @@ best_score_f <- scores_f[best_fold_f, classif.bbrier]
 
 
 
-
-
-
-
   
 ## severity model interpretable ----
 g_ranger_s_interpretable <- 
@@ -445,8 +450,7 @@ g_ranger_s_interpretable <-
   )
   
   
-  
-  
+
 at_ranger_s_interp = AutoTuner$new(
   learner   = GraphLearner$new(g_ranger_s_interpretable, id = "ranger_interp"),
   resampling = rsmp("cv", folds = 3),
@@ -458,12 +462,22 @@ at_ranger_s_interp = AutoTuner$new(
 
 outer_rsmp_s = rsmp("cv", folds = 5)
 
-rr_sev_interp = resample(
-  task         = task_S,
-  learner      = at_ranger_s_interp,
-  resampling   = outer_rsmp_s,
-  store_models = TRUE
-)
+
+
+kør_igen <- "ja"
+
+if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds" ) | kør_igen == "ja") {
+  rr_sev_interp = resample(
+    task         = task_S,
+    learner      = at_ranger_s_interp,
+    resampling   = outer_rsmp_s,
+    store_models = TRUE
+  )
+  saveRDS(rr_sev_interp, "~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds")
+} else {
+  rr_sev_interp = readRDS("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds")
+}
+
 
 
 sev_mse <- rr_sev_interp$aggregate(msr("regr.mse"))
@@ -595,28 +609,29 @@ plot(shap_sev)
 
 
 
+# 
+# ## PDP og ICE  ---- Fungerer ikke endnu
 
-## PDP og ICE  ----
-predictor_freq <- Predictor$new(
-  model = expl_freq$model,
-  data  = X_freq,
-  y     = y_freq,
-  predict.function = function(m, d) {
-    predict(expl_freq, newdata = d, type = "prob")[, 2]   # P(y = 1)
-  },
-  class = "classification"
-)
-
-## 2.2  PDP + ICE for én variabel (fx Cost_claims_sum_history)
-eff_freq <- FeatureEffect$new(
-  predictor = predictor_freq,
-  feature   = "Cost_claims_sum_history",   # brug præcis navn i X_freq
-  method    = "pdp+ice"
-)
-
-p_freq <- plot(eff_freq) +
-  ggtitle("Frequency – PDP + ICE for Cost_claims_sum_history")
-
+# predictor_freq <- Predictor$new(
+#   model = expl_freq$model,
+#   data  = X_freq,
+#   y     = y_freq,
+#   predict.function = function(m, d) {
+#     predict(expl_freq, newdata = d, type = "prob")[, 2]   # P(y = 1)
+#   },
+#   class = "classification"
+# )
+# 
+# ## 2.2  PDP + ICE for én variabel (fx Cost_claims_sum_history)
+# eff_freq <- FeatureEffect$new(
+#   predictor = predictor_freq,
+#   feature   = "Cost_claims_sum_history",   # brug præcis navn i X_freq
+#   method    = "pdp+ice"
+# )
+# 
+# p_freq <- plot(eff_freq) +
+#   ggtitle("Frequency – PDP + ICE for Cost_claims_sum_history")
+# 
 
 ## ale plots ----
 
@@ -661,7 +676,7 @@ ALEPlot(
 
 # i could not get it to work with the categorical vars
 num_vars <- names(X_df)[sapply(X_df, is.numeric)]
-
+num_vars <- setdiff(num_vars, "cost_claim_this_year")
 ale_long <- map_dfr(
   num_vars,
   function(v) {
