@@ -25,87 +25,110 @@ train_model <- function(X, y) {
   library(corrplot)
   library(mlr3verse)
   data_trans <- function(data){
-    
+
     today <- Sys.Date()
-    
-    date_cols <- c("Date_start_contract", 
+
+    date_cols <- c("Date_start_contract",
                    "Date_last_renewal",
-                   "Date_next_renewal", 
+                   "Date_next_renewal",
                    "Date_lapse")
     data[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"),
          .SDcols = date_cols]
     data[, Period_end :=
            fifelse(
              !is.na(Date_lapse) &
-               Date_lapse >= Date_last_renewal &            
-               Date_lapse <= Date_next_renewal,            
+               Date_lapse >= Date_last_renewal &
+               Date_lapse <= Date_next_renewal,
              Date_lapse,
-             pmin(Date_next_renewal, today, na.rm = TRUE) 
+             pmin(Date_next_renewal, today, na.rm = TRUE)
            )]
-    
-    
+
+
     data[, Exposure_days  := as.numeric(Period_end - Date_last_renewal)]
-    data[, Exposure_days  := pmax(Exposure_days, 0)]      
+    data[, Exposure_days  := pmax(Exposure_days, 0)]
     data[, Exposure_unit  := fcase(
       between(Exposure_days, 364, 367), 1,
       default = Exposure_days/365.25
     )]
-    
-    
-    #data[, Cost_claims_sum := sum(Cost_claims_year), by = ID]
-    
-    # Add a column that flags the latest row per group
-    
-    setorder(data, ID, -Date_last_renewal)
-    data[, is_second_latest := FALSE]
-    data[, is_second_latest := .I == .I[2], by = ID]
-    # data$Cost_claims_year <- NA
-    
+
+
     key_vars <- c("ID","Year_matriculation","Power",
-                  "Cylinder_capacity","N_doors","Type_fuel","Weight")
-    
+                  "Cylinder_capacity","N_doors","Type_fuel","Weight", "Length",
+                  "Area", "Value_vehicle", "Date_birth", "Date_driving_licence", "Date_start_contract")
+    data$Date_birth <- as.integer(
+      base::format(
+        base::as.Date(data$Date_birth, format = "%d/%m/%Y"),
+        "%Y"
+      )
+    )
+
+    data$Date_driving_licence <- as.integer(
+      base::format(
+        base::as.Date(data$Date_driving_licence, format = "%d/%m/%Y"),
+        "%Y"
+      )
+    )
+    data$Date_start_contract <- as.integer(
+      base::format(
+        base::as.Date(data$Date_start_contract, format = "%d/%m/%Y"),
+        "%Y"
+      )
+    )
+    data <- data %>% dplyr::filter(Exposure_unit != 0)
     agg <- data[, .(
       Exposure               = sum(Exposure_unit),
       Max_policies_max       = max(Max_policies),
-      Policies_in_force_second_latest = Policies_in_force[is_second_latest],
-      
+      Max_lapse              = max(Lapse),
+      Max_Date_birth         = max(Date_birth),
+      Max_Date_driving_licence = max(Date_driving_licence),
+      Max_Date_start_contract = max(Date_start_contract),
+      dist_channel_0 = as.integer(any(Distribution_channel == "0")),
+      dist_channel_1 = as.integer(any(Distribution_channel == "1")),
+      dist_channel_2 = as.integer(any(!(Distribution_channel %in% c("0", "1")))),
       Max_products_max       = max(Max_products),
       Payment_max            = max(Payment),
-      Premium_second_latest = Premium[is_second_latest],
+      Mean_premium            = (sum(Premium) - Premium[which.max(Date_last_renewal)]) / (sum(Exposure_unit)),
       Cost_claim_this_year = Cost_claims_year[which.max(Date_last_renewal)],
       Cost_claims_sum_history = sum(Cost_claims_year) -(Cost_claims_year[which.max(Date_last_renewal)]),
       R_claims_history   = max(N_claims_history - N_claims_year)/sum(Exposure_unit),
-      # N_claims_year_sum      = sum(N_claims_year),
       N_claims_history   = max(N_claims_history - N_claims_year),
-      # R_claims_history_sum   = sum(R_Claims_history),
       Type_risk_max          = max(Type_risk),
       Value_vehicle_mean     = mean(Value_vehicle),
       N_doors_mean           = mean(N_doors),
       Length_sum             = sum(Length, na.rm = TRUE)
     ), by = key_vars]
-    
-    
-    
-    
-    
-    agg <- agg %>% 
+
+
+    agg <- agg %>%
       dplyr::mutate(claim_indicator = dplyr::if_else(Cost_claims_sum_history + Cost_claim_this_year > 0, 1, 0))
-    
-    tmp <- agg %>%
-      dplyr::filter(is.na(Type_fuel))
-    
-    NA_fuel_Y <- sum(tmp$Cost_claims_sum_history + tmp$Cost_claims_this_year)
-    total_Y <- sum(agg$Cost_claims_sum_history + agg$Cost_claims_this_year)
-    
-    na_Y_ratio <- NA_fuel_Y / total_Y
-    
-    agg <- agg %>% 
-      dplyr::filter(!is.na(Type_fuel))
-    
+
     agg <- agg %>%
       dplyr::mutate(Type_fuel = dplyr::if_else(Type_fuel == "P", 1, 0))
+
+    length_model <- lm(
+      Length ~ Cylinder_capacity + Weight + Value_vehicle,
+      data = na.omit(agg)
+    )
+    fuel_model <- lm(
+      Type_fuel ~ Cylinder_capacity + Weight + Value_vehicle,
+      data = na.omit(agg)
+    )
+
+    agg <- agg %>%
+      dplyr::mutate(
+        pred_length = stats::predict(length_model, newdata = .),
+        pred_type_fuel = stats::predict(fuel_model, newdata = .)
+      ) %>%
+      dplyr::mutate(
+        Length = dplyr::if_else(is.na(Length), pred_length, Length),
+        Type_fuel = dplyr::if_else(is.na(Type_fuel), pred_type_fuel, Type_fuel)
+      ) %>%
+      dplyr::select(-pred_length, -pred_type_fuel)
+
+
     return(agg)
   }
+
   ### flet data igen
   dat <- X %>% dplyr::mutate(Cost_claims_year = y) 
   dat <- data_trans(dat) 

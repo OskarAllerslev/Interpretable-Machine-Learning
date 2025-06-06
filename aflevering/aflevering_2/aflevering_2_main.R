@@ -383,16 +383,16 @@ g_xgb_f_interpretable =
 
 at_xgb_f_interp = AutoTuner$new(
   learner   = GraphLearner$new(g_xgb_f_interpretable, id = "xgb_interp"),
-  resampling = rsmp("cv", folds = 3),
+  resampling = rsmp("cv", folds = 2),
   measure    = msr("classif.bbrier"),          
   tuner      = tnr("random_search"),
-  terminator = trm("evals", n_evals = 5),    
+  terminator = trm("evals", n_evals = 2),    
   store_tuning_instance = TRUE               
 )
 
-outer_rsmp_f = rsmp("cv", folds = 5)            
+outer_rsmp_f = rsmp("cv", folds = 2)            
 
-kør_igen <- "ja"
+kør_igen <- "nej"
 
 if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_frekvens.rds" ) | kør_igen == "ja") {
   rr_freq_interp = resample(
@@ -453,18 +453,18 @@ g_ranger_s_interpretable <-
 
 at_ranger_s_interp = AutoTuner$new(
   learner   = GraphLearner$new(g_ranger_s_interpretable, id = "ranger_interp"),
-  resampling = rsmp("cv", folds = 3),
+  resampling = rsmp("cv", folds = 2),
   measure    = msr("regr.mse"),                
   tuner      = tnr("random_search"),
-  terminator = trm("evals", n_evals = 5),
+  terminator = trm("evals", n_evals = 2),
   store_tuning_instance = TRUE
 )
 
-outer_rsmp_s = rsmp("cv", folds = 5)
+outer_rsmp_s = rsmp("cv", folds = 2)
 
 
 
-kør_igen <- "ja"
+kør_igen <- "nej"
 
 if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds" ) | kør_igen == "ja") {
   rr_sev_interp = resample(
@@ -762,9 +762,37 @@ ggplot(ale_long, aes(x, ale)) +
 
 
 
+# comparing the final model with the one from project 1 -------------------
 
 
+rr_sev_interp$prediction()
+rr_freq_interp$prediction()
 
+
+DATA <- data_trans(data)
+N <- nrow(DATA)
+train_idx <- sample(seq_len(N), size = 0.8 * N)
+
+train <- DATA[train_idx, ]
+test <- DATA[-train_idx, ]
+
+task_freq_train <- task_freq$clone()$filter(train_idx)
+task_sev_train <- task_S$clone()$filter(train_idx)
+
+lrn_freq_final <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
+lrn_sev_final <- best_at_s$clone(deep = TRUE)$train(task_sev_train)
+
+E_X <- lrn_sev_final$predict_newdata(test)
+E_N <- lrn_freq_final$predict_newdata(test)
+
+res <- data.table::data.table(
+  pred_N = E_N$prob[, 1],
+  pred_X = exp(E_X$response)
+)
+res <- res %>% dplyr::mutate(pred_comb = pred_N * pred_X)
+
+mse_combined <- mean((res$pred_comb - test$Cost_claim_this_year)^2)
+mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_year))^2)
 
 
 
