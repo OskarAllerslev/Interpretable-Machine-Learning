@@ -797,7 +797,7 @@ mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_yea
 
 
 
-
+# dat of birth stuff ------------------------------------------------------
 
 
 
