@@ -151,7 +151,7 @@ data_trans <- function(data){
 
 
 # gammel split model ------------------------------------------------------
-data <- fread("Motor vehicle insurance data.csv", sep = ";")
+data <- fread("aflevering/Motor vehicle insurance data.csv", sep = ";")
 data_t <- data_trans(data)
 ## frek model  ----
 data_F <- data_t
@@ -214,7 +214,7 @@ g_ranger_f <- prep_graph %>>%
   po("learner",
      lrn("regr.ranger",
          mtry = 5,
-         min.node.size = 1,  # or your chosen stopping rule
+         min.node.size = 1, 
          importance = "permutation"
      )
   )
@@ -326,7 +326,7 @@ g_ranger_s <- prep_graph %>>%
   po("learner",
      lrn("regr.ranger",
          mtry = 5,
-         min.node.size = 5,  # or your chosen stopping rule
+         min.node.size = 5,  
          importance = "permutation"
      )
   )
@@ -444,15 +444,15 @@ g_xgb_s_interpretable <-
   prep_graph %>>%
   po("learner",
      lrn("regr.xgboost",
-         max_depth      = 2,          # Comparable to mtry (indirectly)
+         max_depth      = 2,          
          eta           = to_tune(0.05, 0.1),
          nrounds       = to_tune(50, 150),
-         subsample     = to_tune(0.6, 1)   ,    # Similar to sample.fraction
-         colsample_bytree = to_tune(0.7, 1),      # Similar to mtry in RF
-         min_child_weight = to_tune(1, 10),       # Similar to min.node.size
+         subsample     = to_tune(0.6, 1)   ,    
+         colsample_bytree = to_tune(0.7, 1),     
+         min_child_weight = to_tune(1, 10),       
          booster        = "gbtree",
          objective      = "reg:squarederror",
-         tree_method    = "hist"  # fast and scalable, or use "auto"
+         tree_method    = "hist"  
      )
   )
 
@@ -585,7 +585,7 @@ final_xgb <- lrn(
   "classif.xgboost",
   predict_type = "prob",
   eval_metric  = "logloss",
-  max_depth    = 2,                                   # fast fra din opskrift
+  max_depth    = 2,                                   
   eta          = best_par[[1]]$classif.xgboost.eta,
   nrounds      = best_par[[1]]$classif.xgboost.nrounds,
   subsample    = best_par[[1]]$classif.xgboost.subsample
@@ -599,7 +599,7 @@ final_xgb$train(task_freq)
 
 X_df <- task_freq$data(cols = final_xgb$feature_names) |> as.data.frame()
 
-j <- which(names(X_df) == "Weight")  # præcis én kolonne
+j <- which(names(X_df) == "Weight")  
 
 
 
@@ -609,7 +609,7 @@ pred_freq <- function(X.model, newdata) {
 
 ALEPlot(
   X        = X_df,
-  X.model  = final_xgb,      # Learner
+  X.model  = final_xgb,      
   pred.fun = pred_freq,
   J        = j,
   K        = 40
@@ -748,6 +748,196 @@ mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_yea
 
 
 # dat of birth stuff ------------------------------------------------------
+
+#### nyt forsøg ----
+debiased_pred <- function(glex_obj, vars_to_zero) {
+  cols_rm <- grep(paste(vars_to_zero, collapse = "|"),
+                  colnames(glex_obj$m), value = TRUE)
+  m_tmp <- glex_obj$m
+  m_tmp[, cols_rm] <- 0                
+  rowSums(m_tmp) + glex_obj$intercept   
+}
+
+check_glex_identity <- function(glex_obj, model, X) {
+  p1 <- rowSums(glex_obj$m) + glex_obj$intercept          
+  p2 <- predict(model, X, outputmargin = TRUE)           
+  c(max_abs  = max(abs(p1 - p2)),
+    mean_abs = mean(abs(p1 - p2)))
+}
+
+feat <- task_freq$feature_names
+df   <- as.data.frame(task_freq$data(cols = feat))
+X    <- model.matrix(~ . - 1, df)
+
+if ("positive" %in% levels(task_freq$truth())) {
+  pos_lab <- "positive"
+} else {
+  pos_lab <- names(table(task_freq$truth()))[1]         
+}
+y <- as.integer(task_freq$truth() == pos_lab)
+
+dtrain <- xgb.DMatrix(X, label = y)
+
+params <- list(
+  objective   = "binary:logistic",
+  eval_metric = "logloss",
+  eta         = bp$classif.xgboost.eta,
+  max_depth   = 2L,
+  subsample   = bp$classif.xgboost.subsample
+)
+
+xgb_cls <- xgb.train(params,
+                     dtrain,
+                     nrounds = bp$classif.xgboost.nrounds,
+                     verbose = 0)
+
+glex_cls <- glex(xgb_cls, X)
+check_glex_identity(glex_cls, xgb_cls, X)
+
+vars_rm <- c("Date_birth", "Max_Date_birth")
+
+pred_org_margin <- predict(xgb_cls, X, outputmargin = TRUE)
+pred_db_margin  <- debiased_pred(glex_cls, vars_rm)
+
+pred_org_prob <- plogis(pred_org_margin)
+pred_db_prob  <- plogis(pred_db_margin)
+
+plot(pred_org_prob, pred_db_prob,
+     xlab = "Original probability",
+     ylab = "Debiased probability")
+abline(0, 1, col = "red")
+
+#### sev model plots ----
+
+feat <- task_S$feature_names
+df   <- as.data.frame(task_S$data(cols = feat))
+X    <- model.matrix(~ . - 1, df)
+
+y <- as.numeric(task_S$truth())
+dtrain <- xgb.DMatrix(X, label = y)
+
+
+bp_reg <- as.list(best_at_s$tuning_result$x)[[1]]  
+names(bp_reg)                                     
+
+
+
+params <- list(
+  objective         = "reg:squarederror",
+  eval_metric       = "rmse",
+  eta               = bp_reg$regr.xgboost.eta,
+  max_depth         = 2L,
+  subsample         = bp_reg$regr.xgboost.subsample,
+  colsample_bytree  = bp_reg$regr.xgboost.colsample_bytree,
+  min_child_weight  = bp_reg$regr.xgboost.min_child_weight
+)
+
+nrounds <- as.integer(bp_reg$regr.xgboost.nrounds)
+
+xgb_reg <- xgb.train(
+  params  = params,
+  data    = dtrain,
+  nrounds = nrounds,
+  verbose = 0
+)
+
+
+glex_reg <- glex(xgb_reg, X)
+
+debiased_pred <- function(glex_obj, vars_to_zero) {
+  cols_rm <- grep(paste(vars_to_zero, collapse = "|"),
+                  colnames(glex_obj$m), value = TRUE)
+  m_tmp <- glex_obj$m
+  m_tmp[, cols_rm] <- 0
+  rowSums(m_tmp) + glex_obj$intercept     
+}
+
+vars_rm <- c("Date_birth", "Max_Date_birth")
+
+pred_org <- predict(xgb_reg, X)                 
+pred_db  <- debiased_pred(glex_reg, vars_rm)   
+diff     <- pred_org - pred_db                
+
+
+plot(exp(exp(pred_org)), exp(exp(pred_db)),
+     xlab = "Original prediction",
+     ylab = "De-biased prediction")
+abline(0, 1, col = "red", lwd = 2)
+
+
+
+
+
+
+# mse for debiased --------------------------------------------------------
+
+feat_sev  <- task_S$feature_names     
+feat_freq <- task_freq$feature_names
+vars_rm   <- c("Date_birth", "Max_Date_birth")
+
+missing_sev <- setdiff(feat_sev, colnames(test))
+
+df_test_sev <- test %>%
+  as_tibble() %>%
+  {
+    if (length(missing_sev) > 0) {
+      for (col in missing_sev) {
+        .[[col]] <- 0
+      }
+    }
+    .
+  } %>%
+  select(all_of(feat_sev))
+
+X_test_sev     <- model.matrix(~ . - 1, data = df_test_sev)
+marg_org_sev   <- predict(xgb_reg, X_test_sev)
+cost_org_sev   <- exp(exp(marg_org_sev))
+
+glex_test_sev  <- glex(xgb_reg, X_test_sev)
+marg_db_sev    <- debiased_pred(glex_test_sev, vars_rm)
+cost_db_sev    <- exp(exp(marg_db_sev))
+
+missing_clas <- setdiff(feat_freq, colnames(test))
+
+df_test_clas <- test %>%
+  as_tibble() %>%
+  {
+    if (length(missing_clas) > 0) {
+      for (col in missing_clas) {
+        .[[col]] <- 0
+      }
+    }
+    .
+  } %>%
+  select(all_of(feat_freq))
+
+
+X_test_freq    <- model.matrix(~ . - 1, data = df_test_clas)
+marg_freq      <- predict(xgb_cls, X_test_freq, outputmargin = TRUE)
+prob_freq      <- plogis(marg_freq)   # P(N>0)
+
+pred_comb_org <- prob_freq * cost_org_sev
+pred_comb_db  <- prob_freq * cost_db_sev
+actual        <- test$Cost_claim_this_year
+
+mse_org <- mean((pred_comb_org - actual)^2)
+mse_db  <- mean((pred_comb_db  - actual)^2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #for classification
 library(glex)
 
@@ -767,8 +957,13 @@ y      <- as.numeric(task_freq$truth())
 dtrain <- xgb.DMatrix(X, label = y)
 
 
+y <- ifelse(task_freq$truth() == "positive", 1L, 0L)
+dtrain <- xgb.DMatrix(X, label = y)
+
+
 params <- list(
-  objective = "reg:squarederror",
+  objective = "binary:logistic",
+  eval_metric = "logloss",
   eta       = eta,
   max_depth = max_depth,
   subsample = subsample
@@ -787,11 +982,12 @@ glex_obj_F <- glex(xgb_class, X)
 vars_rm  <- c("Date_birth", "Max_Date_birth")
 cols_rm_F  <- grep(paste(vars_rm, collapse = "|"), colnames(glex_obj_F$m), value = TRUE)
 m_db_F     <- glex_obj_F$m
-m_db_F[, cols_rm] <- 0
+m_db_F[, cols_rm_F] <- 0
 pred_db_F  <- rowSums(m_db_F) + glex_obj_F$intercept
 
 
 pred_org_F <- predict(xgb_class, X)
+
 
 
 plot(pred_org_F, pred_db_F, xlab = "original", ylab = "debiased")
@@ -880,114 +1076,104 @@ ggplot(shap_birth_df, aes(x = Date_birth, y = shap_value)) +
 
 # MSE FINAL COMPARISON ----------------------------------------------------
 
-
-rr_sev_interp$prediction()
-rr_freq_interp$prediction()
-
-
-DATA <- data_trans(data)
-N <- nrow(DATA)
-train_idx <- sample(seq_len(N), size = 0.8 * N)
-
-train <- DATA[train_idx, ]
-test <- DATA[-train_idx, ]
-
-task_freq_train <- task_freq$clone()$filter(train_idx)
-task_sev_train <- task_S$clone()$filter(train_idx)
-
-lrn_freq_final <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
-lrn_sev_final <- best_at_s$clone(deep = TRUE)$train(task_sev_train)
-
-E_X <- lrn_sev_final$predict_newdata(test)
-E_X
-E_N <- lrn_freq_final$predict_newdata(test)
-E_N
-
-res <- data.table::data.table(
-  pred_N = E_N$prob[, 1],
-  pred_X = exp(E_X$response)
-)
-res <- res %>% dplyr::mutate(pred_comb = pred_N * pred_X)
-
-mse_combined <- mean((res$pred_comb - test$Cost_claim_this_year)^2)
-mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_year))^2)
-
-
-
-
-m_db     <- glex_obj$m
-m_db[, cols_rm] <- 0
-pred_db  <- rowSums(m_db) + glex_obj$intercept
-pred_org <- predict(xgb_reg, X) 
-
-MSE_S = (pred_db - as.numeric(task_S$truth()))^2
-
-m_db_F     <- glex_obj_F$m
-m_db_F[, cols_rm] <- 0
-pred_db_F  <- rowSums(m_db_F) + glex_obj_F$intercept
-pred_org_F <- predict(xgb_class, X) 
-
-MSE_F = (pred_db_F - as.numeric(task_freq$truth()))^2
-
-mean(MSE_F)
+# 
+# rr_sev_interp$prediction()
+# rr_freq_interp$prediction()
+# 
+# 
+# DATA <- data_trans(data)
+# N <- nrow(DATA)
+# train_idx <- sample(seq_len(N), size = 0.8 * N)
+# 
+# train <- DATA[train_idx, ]
+# test <- DATA[-train_idx, ]
+# 
+# task_freq_train <- task_freq$clone()$filter(train_idx)
+# task_sev_train <- task_S$clone()$filter(train_idx)
+# 
+# lrn_freq_final <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
+# lrn_sev_final <- best_at_s$clone(deep = TRUE)$train(task_sev_train)
+# 
+# E_X <- lrn_sev_final$predict_newdata(test)
+# E_X
+# E_N <- lrn_freq_final$predict_newdata(test)
+# E_N
+# 
+# res <- data.table::data.table(
+#   pred_N = E_N$prob[, 1],
+#   pred_X = exp(E_X$response)
+# )
+# res <- res %>% dplyr::mutate(pred_comb = pred_N * pred_X)
+# 
+# mse_combined <- mean((res$pred_comb - test$Cost_claim_this_year)^2)
+# mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_year))^2)
+# 
+# 
+# 
+# 
+# m_db     <- glex_obj$m
+# m_db[, cols_rm] <- 0
+# pred_db  <- rowSums(m_db) + glex_obj$intercept
+# pred_org <- predict(xgb_reg, X) 
+# 
+# MSE_S = (pred_db - as.numeric(task_S$truth()))^2
+# 
+# m_db_F     <- glex_obj_F$m
+# m_db_F[, cols_rm] <- 0
+# pred_db_F  <- rowSums(m_db_F) + glex_obj_F$intercept
+# pred_org_F <- predict(xgb_class, X) 
+# 
+# MSE_F = (pred_db_F - as.numeric(task_freq$truth()))^2
+# 
+# mean(MSE_F)
 
 #-------
-DATA    <- data_trans(data)
-set.seed(42)
-N       <- nrow(DATA)
-train_i <- sample(seq_len(N), size = 0.8 * N)
-
-# 2) Klon og filtrer Tasks
-task_S_train    <- task_S$clone()$filter(train_i)
-task_S_test     <- task_S$clone()$filter(-train_i)
-task_freq_train <- task_freq$clone()$filter(train_i)
-task_freq_test  <- task_freq$clone()$filter(-train_i)
-
-# 3) Træn de endelige modeller på trænings-Tasks
-lrn_sev  <- best_at_s$clone(deep = TRUE)$train(task_S_train)
-lrn_freq <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
-
-# 4) Forudsig direkte på test-Tasks (undgå 0-cols fejl)
-pred_org_s <- lrn_sev$predict(task_S_test)$response
-pred_org_f <- lrn_freq$predict(task_freq_test)$prob[, 2]
-
-# 5) Træk test-data ud som data.frames for DALEX
-X_test_s <- as.data.frame(task_S_test$data())
-y_test_s <- task_S_test$truth()
-X_test_f <- as.data.frame(task_freq_test$data())
-y_test_f <- task_freq_test$truth()
-
-# 2) Debiased‐predictions vha. glex_obj$m
-cols_rm <- c("Date_birth", "Date_driving_licence")
-
-## Severity
-m_s      <- glex_obj$m
-int_s    <- glex_obj$intercept
-m_s_db   <- m_s
-m_s_db[, cols_rm] <- 0
-pred_db_s <- rowSums(m_s_db) + int_s
-
-## Frequency
-m_f      <- glex_obj_F$m
-int_f    <- glex_obj_F$intercept
-m_f_db   <- m_f
-m_f_db[, cols_rm] <- 0
-pred_db_f <- rowSums(m_f_db) + int_f
-
-# 3) Beregn MSE på test‐data
-y_test_s <- task_S_test$truth()
-y_test_f <- task_freq_test$truth()
-
-mse_org_s <- mean((pred_org_s - y_test_s)^2)
-mse_db_s  <- mean((pred_db_s  - y_test_s)^2)
-mse_org_f <- mean((pred_org_f - y_test_f)^2)
-mse_db_f  <- mean((pred_db_f  - y_test_f)^2)
-
-# 4) Vis resultater
-list(
-  severity  = c(original = mse_org_s, debiased = mse_db_s),
-  frequency = c(original = mse_org_f, debiased = mse_db_f)
-)
-
-
-
+# DATA    <- data_trans(data)
+# set.seed(42)
+# N       <- nrow(DATA)
+# train_i <- sample(seq_len(N), size = 0.8 * N)
+# 
+# task_S_train    <- task_S$clone()$filter(train_i)
+# task_S_test     <- task_S$clone()$filter(-train_i)
+# task_freq_train <- task_freq$clone()$filter(train_i)
+# task_freq_test  <- task_freq$clone()$filter(-train_i)
+# 
+# lrn_sev  <- best_at_s$clone(deep = TRUE)$train(task_S_train)
+# lrn_freq <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
+# 
+# pred_org_s <- lrn_sev$predict(task_S_test)$response
+# pred_org_f <- lrn_freq$predict(task_freq_test)$prob[, 2]
+# 
+# X_test_s <- as.data.frame(task_S_test$data())
+# y_test_s <- task_S_test$truth()
+# X_test_f <- as.data.frame(task_freq_test$data())
+# y_test_f <- task_freq_test$truth()
+# 
+# cols_rm <- c("Date_birth", "Date_driving_licence")
+# m_s      <- glex_obj$m
+# int_s    <- glex_obj$intercept
+# m_s_db   <- m_s
+# m_s_db[, cols_rm] <- 0
+# pred_db_s <- rowSums(m_s_db) + int_s
+# 
+# m_f      <- glex_obj_F$m
+# int_f    <- glex_obj_F$intercept
+# m_f_db   <- m_f
+# m_f_db[, cols_rm] <- 0
+# pred_db_f <- rowSums(m_f_db) + int_f
+# 
+# y_test_s <- task_S_test$truth()
+# y_test_f <- task_freq_test$truth()
+# 
+# mse_org_s <- mean((pred_org_s - y_test_s)^2)
+# mse_db_s  <- mean((pred_db_s  - y_test_s)^2)
+# mse_org_f <- mean((pred_org_f - y_test_f)^2)
+# mse_db_f  <- mean((pred_db_f  - y_test_f)^2)
+# 
+# list(
+#   severity  = c(original = mse_org_s, debiased = mse_db_s),
+#   frequency = c(original = mse_org_f, debiased = mse_db_f)
+# )
+# 
+# 
+# 
