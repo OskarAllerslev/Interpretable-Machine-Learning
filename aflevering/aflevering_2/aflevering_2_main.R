@@ -941,8 +941,21 @@ abline(0, 1)
 diff <- (rowSums(glex_obj$m) + glex_obj$intercept) - pred_org
 print(c(max = max(abs(diff)), mean = mean(abs(diff))))
 
-hist(glex_obj$shap[["Date_birth"]]) 
 
-formula(glex_obj$m)
+shap_birth_df <- data.frame(
+  shap_value  = glex_obj$shap[["Date_birth"]],
+  Date_birth  = df$Date_birth
+)
+
+head(shap_birth_df)
+
+# Optional: Plot relationship
+library(ggplot2)
+ggplot(shap_birth_df, aes(x = Date_birth, y = shap_value)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess") +
+  labs(title = "SHAP Value vs Date of Birth", y = "SHAP", x = "Date of Birth")
+
+
 
 
