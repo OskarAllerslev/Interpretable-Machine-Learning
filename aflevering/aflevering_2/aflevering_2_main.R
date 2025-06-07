@@ -807,6 +807,56 @@ mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_yea
 
 
 # dat of birth stuff ------------------------------------------------------
+#for classification
+
+
+
+bp          <- as.list(best_at_f$tuning_result$x)[[1]]
+eta         <- bp$classif.xgboost.eta
+nrounds     <- bp$classif.xgboost.nrounds
+subsample   <- bp$classif.xgboost.subsample
+max_depth   <- 1L                          
+
+# matrix-input
+feat   <- task_freq$feature_names
+df     <- as.data.frame(task_freq$data(cols = feat))
+X      <- model.matrix(~ . - 1, data = df)
+y      <- as.numeric(task_freq$truth())
+dtrain <- xgb.DMatrix(X, label = y)
+
+
+params <- list(
+  objective = "reg:squarederror",
+  eta       = eta,
+  max_depth = max_depth,
+  subsample = subsample
+)
+xgb_reg <- xgb.train(
+  params  = params,
+  data    = dtrain,
+  nrounds = nrounds,
+  verbose = 0
+)
+
+
+glex_obj <- glex(xgb_reg, X)
+
+
+vars_rm  <- c("Date_birth", "Max_Date_birth")
+cols_rm  <- grep(paste(vars_rm, collapse = "|"), colnames(glex_obj$m), value = TRUE)
+m_db     <- glex_obj$m
+m_db[, cols_rm] <- 0
+pred_db  <- rowSums(m_db) + glex_obj$intercept
+
+
+pred_org <- predict(xgb_reg, X)
+
+
+plot(pred_org, pred_db, xlab = "original", ylab = "debiased")
+abline(0, 1)
+diff <- (rowSums(glex_obj$m) + glex_obj$intercept) - pred_org
+print(c(max = max(abs(diff)), mean = mean(abs(diff))))
+
 
 
 
