@@ -155,9 +155,9 @@ data_trans <- function(data){
   return(agg)
 }
 
-  
-  
-  
+
+
+
 
 # gammel split model ------------------------------------------------------
 data <- fread("~/Interpretable-Machine-Learning/aflevering/Motor vehicle insurance data.csv", sep = ";")
@@ -179,7 +179,7 @@ task_freq <- as_task_classif(
 
 
 task_freq$set_col_roles("Exposure", "weight")
-    
+
 # stratificer tjek at det faktisk er hvad der sker her
 task_freq$col_roles$stratum = "claim_indicator"
 
@@ -211,20 +211,20 @@ g_xgb_f =
   prep_graph %>>%
   po("learner",
      lrn("classif.xgboost",
-      predict_type = "prob",
-      eval_metric = "logloss",
-      nrounds      = to_tune(200, 800),
-      max_depth    = to_tune(3, 7),
-      eta          = to_tune(0.01, 0.3),
-      subsample    = to_tune(0.6, 1)
-  ))
+         predict_type = "prob",
+         eval_metric = "logloss",
+         nrounds      = to_tune(200, 800),
+         max_depth    = to_tune(3, 7),
+         eta          = to_tune(0.01, 0.3),
+         subsample    = to_tune(0.6, 1)
+     ))
 
 g_ranger_f <- prep_graph %>>%
   po("learner",
      lrn("regr.ranger",
          mtry = 5,
          min.node.size = 1,  # or your chosen stopping rule
-          importance = "permutation"
+         importance = "permutation"
      )
   )
 
@@ -259,7 +259,7 @@ at_featureless_f = auto(g_featureless_f, "featureless")
 tasks_f = list(task_freq)
 learners_f = list(at_lgbm_f, at_xgb_f, at_enet_f, at_featureless_f, at_rf_f)
 design_f = benchmark_grid(task = tasks_f, learners = learners_f,
-                        resampling = rsmp("cv", folds = 2))
+                          resampling = rsmp("cv", folds = 2))
 
 kør_igen <- "nej"
 
@@ -273,7 +273,7 @@ if (!file.exists("~/Interpretable-Machine-Learning/aflevering/benchmark_frekvens
 
 
 ## sev model ---- 
-  
+
 
 data_S <- data_t
 data_S <- data_S %>% dplyr::select(-claim_indicator, -ID)
@@ -305,7 +305,7 @@ g_lgbm_s =
   prep_graph %>>%
   po("learner",
      lrn("regr.lightgbm",
-        objective     = "regression",
+         objective     = "regression",
          #metric        = "rmse",
          learning_rate          = to_tune(1e-3, 0.2, logscale = TRUE),
          num_leaves             = to_tune(16L, 32L),
@@ -317,7 +317,7 @@ g_xgb_s =
   prep_graph %>>%
   po("learner",
      lrn("regr.xgboost",
-        objective = "reg:squarederror",
+         objective = "reg:squarederror",
          eta                    = to_tune(1e-3, 0.2, logscale = TRUE),
          max_depth              = to_tune(3L, 9L),
          nrounds                = to_tune(200L, 1000L))
@@ -336,7 +336,7 @@ g_ranger_s <- prep_graph %>>%
      lrn("regr.ranger",
          mtry = 5,
          min.node.size = 5,  # or your chosen stopping rule
-          importance = "permutation"
+         importance = "permutation"
      )
   )
 
@@ -362,7 +362,7 @@ tasks_s = list(task_S)
 learners_s = list(at_lgbm_s, at_xgb_s, at_enet_s,at_ranger_s, at_featureless_s)
 #learners_s = list(at_ranger, at_featureless_s)
 design_s = benchmark_grid(task = tasks_s, learners = learners_s,
-                        resampling = rsmp("cv", folds = 5))
+                          resampling = rsmp("cv", folds = 5))
 
 kør_igen <- "nej"
 
@@ -385,7 +385,7 @@ g_xgb_f_interpretable =
      lrn("classif.xgboost",
          predict_type = "prob",
          eval_metric   = "logloss",
-         max_depth     = 1,      
+         max_depth     = 2,      
          eta           = to_tune(0.05, 0.1),
          nrounds       = to_tune(50, 150),
          subsample     = to_tune(0.6, 1)
@@ -447,24 +447,27 @@ best_score_f <- scores_f[best_fold_f, classif.bbrier]
 
 
 
-  
+
 ## severity model interpretable ----
-g_ranger_s_interpretable <- 
+g_xgb_s_interpretable <- 
   prep_graph %>>%
   po("learner",
-     lrn("regr.ranger",
-         min.node.size = to_tune(10, 20),
-         mtry          = to_tune(3, 5),
-         num.trees     = to_tune(100, 200),
-         importance    = "permutation",
-         respect.unordered.factors = "order"
+     lrn("regr.xgboost",
+         max_depth      = 2,          # Comparable to mtry (indirectly)
+         eta           = to_tune(0.05, 0.1),
+         nrounds       = to_tune(50, 150),
+         subsample     = to_tune(0.6, 1)   ,    # Similar to sample.fraction
+         colsample_bytree = to_tune(0.7, 1),      # Similar to mtry in RF
+         min_child_weight = to_tune(1, 10),       # Similar to min.node.size
+         booster        = "gbtree",
+         objective      = "reg:squarederror",
+         tree_method    = "hist"  # fast and scalable, or use "auto"
      )
   )
-  
-  
 
-at_ranger_s_interp = AutoTuner$new(
-  learner   = GraphLearner$new(g_ranger_s_interpretable, id = "ranger_interp"),
+
+at_xgb_s_interp = AutoTuner$new(
+  learner   = GraphLearner$new(g_xgb_s_interpretable, id = "xgb_interp"),
   resampling = rsmp("cv", folds = 2),
   measure    = msr("regr.mse"),                
   tuner      = tnr("random_search"),
@@ -478,16 +481,16 @@ outer_rsmp_s = rsmp("cv", folds = 2)
 
 kør_igen <- "nej"
 
-if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds" ) | kør_igen == "ja") {
+if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity_xgb.rds" ) | kør_igen == "ja") {
   rr_sev_interp = resample(
     task         = task_S,
-    learner      = at_ranger_s_interp,
+    learner      = at_xgb_s_interp,
     resampling   = outer_rsmp_s,
     store_models = TRUE
   )
-  saveRDS(rr_sev_interp, "~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds")
+  saveRDS(rr_sev_interp, "~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity_xgb.rds")
 } else {
-  rr_sev_interp = readRDS("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity.rds")
+  rr_sev_interp = readRDS("~/Interpretable-Machine-Learning/aflevering/inte_pretable_severity_xgb.rds")
 }
 
 
@@ -495,8 +498,8 @@ if (!file.exists("~/Interpretable-Machine-Learning/aflevering/inte_pretable_seve
 sev_mse <- rr_sev_interp$aggregate(msr("regr.mse"))
 
 p2 <- autoplot(rr_sev_interp,
-         measure = msr("regr.mse"),
-         type = "boxplot") + 
+               measure = msr("regr.mse"),
+               type = "boxplot") + 
   ggplot2::ggtitle("Severity")
 
 
@@ -514,12 +517,12 @@ best_score_s <- scores_s[best_fold_s, regr.mse]
 
 
 
-  
+
 cat("Sev log mse ",sev_mse, " classif bbrier ", classif_bbrier )  
-  
-  
+
+
 (p1 + p2)  
-  
+
 
 
 
@@ -549,14 +552,14 @@ plot(imp_freq)
 
 ### det her virker ikke rigtigt 
 
-
-expl_sev  <- explain_mlr3(best_sev_mod,
-                          data    = X_sev,
-                          y       = y_sev,
-                          label   = "Ranger",
-                          weights = task_S$weights$weight)
-imp_sev   <- model_parts(expl_sev, type = "raw")
-plot(imp_sev) 
+# 
+# expl_sev  <- explain_mlr3(best_sev_mod,
+#                           data    = X_sev,
+#                           y       = y_sev,
+#                           label   = "xgb",
+#                           weights = task_S$weights$weight)
+# imp_sev   <- model_parts(expl_sev, type = "raw")
+# plot(imp_sev) 
 
 
 
@@ -655,7 +658,7 @@ final_xgb <- lrn(
   "classif.xgboost",
   predict_type = "prob",
   eval_metric  = "logloss",
-  max_depth    = 1,                                   # fast fra din opskrift
+  max_depth    = 2,                                   # fast fra din opskrift
   eta          = best_par[[1]]$classif.xgboost.eta,
   nrounds      = best_par[[1]]$classif.xgboost.nrounds,
   subsample    = best_par[[1]]$classif.xgboost.subsample
@@ -696,6 +699,8 @@ ale_long <- map_dfr(
     tmp <- tempfile(); png(tmp)        
     ale <- ALEPlot(X_df, final_xgb, pred_freq, J = j, K = 40, NA.plot = TRUE)
     dev.off(); unlink(tmp)
+    if (sd(ale$f.values) < 1e-6) return(NULL)
+    
     tibble::tibble(
       variable = v,
       x        = ale$x.values,        
@@ -723,22 +728,27 @@ ggplot(ale_long, aes(x, ale)) +
 
 best_par_s <- as.list(best_at_s$tuning_result$x)
 
-final_ranger <- lrn(
-  "regr.ranger",
-  predict_type   = "response",
-  mtry           = best_par_s[[1]]$regr.ranger.mtry,
-  min.node.size  = best_par_s[[1]]$regr.ranger.min.node.size,
-  num.trees      = best_par_s[[1]]$regr.ranger.num.trees,
-  importance     = "permutation"
+final_xgb_s <- lrn(
+  "regr.xgboost",
+  predict_type        = "response",
+  nrounds             = best_par_s[[1]]$regr.xgboost.nrounds,
+  max_depth           = best_par_s[[1]]$regr.xgboost.max_depth,
+  eta                 = best_par_s[[1]]$regr.xgboost.eta,
+  subsample           = best_par_s[[1]]$regr.xgboost.subsample,
+  colsample_bytree    = best_par_s[[1]]$regr.xgboost.colsample_bytree,
+  min_child_weight    = best_par_s[[1]]$regr.xgboost.min_child_weight,
+  booster             = "gbtree",
+  objective           = "reg:squarederror",
+  tree_method         = "hist"
 )
 
-final_ranger$train(task_S)               
+final_xgb_s$train(task_S)               
 
 pred_sev <- function(X.model, newdata) {
   X.model$predict_newdata(newdata)$response   
 }
 
-X_df  <- task_S$data(cols = final_ranger$feature_names) |> as.data.frame()
+X_df  <- task_S$data(cols = final_xgb_s$feature_names) |> as.data.frame()
 num_vars <- names(X_df)[sapply(X_df, is.numeric)]
 
 ale_long <- map_dfr(
@@ -746,10 +756,11 @@ ale_long <- map_dfr(
   function(v) {
     j   <- which(names(X_df) == v)
     tmp <- tempfile(); png(tmp)          
-    ale <- ALEPlot(X_df, final_ranger, pred_sev,
+    ale <- ALEPlot(X_df, final_xgb_s, pred_sev,
                    J = j, K = 40, NA.plot = TRUE)
     dev.off(); unlink(tmp)
-
+    if (sd(ale$f.values) < 1e-6) return(NULL)
+    
     tibble(
       variable = v,
       x        = ale$x.values,
@@ -811,6 +822,7 @@ mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_yea
 
 # dat of birth stuff ------------------------------------------------------
 #for classification
+library(glex)
 
 
 
@@ -818,7 +830,7 @@ bp          <- as.list(best_at_f$tuning_result$x)[[1]]
 eta         <- bp$classif.xgboost.eta
 nrounds     <- bp$classif.xgboost.nrounds
 subsample   <- bp$classif.xgboost.subsample
-max_depth   <- 1L                          
+max_depth   <- 2L                          
 
 # matrix-input
 feat   <- task_freq$feature_names
@@ -860,11 +872,77 @@ abline(0, 1)
 diff <- (rowSums(glex_obj$m) + glex_obj$intercept) - pred_org
 print(c(max = max(abs(diff)), mean = mean(abs(diff))))
 
+hist(glex_obj$shap[["Date_birth"]]) 
+
+
+
+formula(glex_obj$m)
+
+
+#---------------------
 
 
 
 
+# dat of birth stuff ------------------------------------------------------
+#for regression
 
 
+
+bp <- as.list(best_at_s$tuning_result$x)[[1]]
+
+eta               <- bp$regr.xgboost.eta
+nrounds           <- bp$regr.xgboost.nrounds
+subsample         <- bp$regr.xgboost.subsample
+max_depth         <- bp$regr.xgboost.max_depth
+colsample_bytree  <- bp$regr.xgboost.colsample_bytree
+min_child_weight  <- bp$regr.xgboost.min_child_weight
+
+
+
+# matrix-input
+feat   <- task_S$feature_names
+df     <- as.data.frame(task_S$data(cols = feat))
+X      <- model.matrix(~ . - 1, data = df)
+y      <- as.numeric(task_S$truth())
+dtrain <- xgb.DMatrix(X, label = y)
+
+
+params <- list(
+  objective = "reg:squarederror",
+  eta       = eta,
+  max_depth = max_depth,
+  subsample = subsample
+)
+xgb_reg <- xgb.train(
+  params  = params,
+  data    = dtrain,
+  nrounds = nrounds,
+  verbose = 0
+)
+
+
+glex_obj <- glex(xgb_reg, X)
+
+
+vars_rm  <- c("Date_birth", "Max_Date_birth")
+cols_rm  <- grep(paste(vars_rm, collapse = "|"), colnames(glex_obj$m), value = TRUE)
+m_db     <- glex_obj$m
+m_db[, cols_rm] <- 0
+pred_db  <- rowSums(m_db) + glex_obj$intercept
+
+
+pred_org <- predict(xgb_reg, X)
+
+
+
+plot(pred_org, pred_db, xlab = "original", ylab = "debiased")
+abline(0, 1)
+diff <- (rowSums(glex_obj$m) + glex_obj$intercept) - pred_org
+print(c(max = max(abs(diff)), mean = mean(abs(diff))))
+
+hist(glex_obj$shap[["Date_birth"]]) 
+
+formula(glex_obj$m)
 
 
