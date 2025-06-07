@@ -31,7 +31,6 @@ library(corrr)
 library(corrplot)
 library(mlr3verse)
 library(xgboost)
-install.packages("glex", repos = "https://plantedml.r-universe.dev")
 library(glex)
 
 
@@ -78,8 +77,6 @@ data_trans <- function(data){
       "%Y"
     )
   )
-  min_year_Date_birth <- min(data$Date_birth, na.rm = TRUE)
-  data$Date_birth <- data$Date_birth - min_year_Date_birth
   
   data$Date_driving_licence <- as.integer(
     base::format(
@@ -88,9 +85,6 @@ data_trans <- function(data){
     )
   )
   
-  min_year_Date_driving_licence <- min(data$Date_driving_licence, na.rm = TRUE)
-  data$Date_driving_licence <- data$Date_driving_licence - min_year_Date_driving_licence
-  
   
   data$Date_start_contract <- as.integer(
     base::format(
@@ -98,9 +92,6 @@ data_trans <- function(data){
       "%Y"
     )
   )
-  
-  min_year_Date_start_contract <- min(data$Date_start_contract, na.rm = TRUE)
-  data$Date_start_contract <- data$Date_start_contract - min_year_Date_start_contract
   
   
   
@@ -160,7 +151,7 @@ data_trans <- function(data){
 
 
 # gammel split model ------------------------------------------------------
-data <- fread("~/Interpretable-Machine-Learning/aflevering/Motor vehicle insurance data.csv", sep = ";")
+data <- fread("Motor vehicle insurance data.csv", sep = ";")
 data_t <- data_trans(data)
 ## frek model  ----
 data_F <- data_t
@@ -538,29 +529,8 @@ X_freq <- as.data.frame(task_freq$data(cols = best_at_f$feature_names))
 y_freq <- task_freq$truth()
 
 X_sev  <- as.data.frame(task_S$data(cols = best_at_s$feature_names))
+X_sev$Cost_claim_this_year <- NULL
 y_sev  <- task_S$truth()
-
-## global feature-importance ----
-
-expl_freq <- DALEX::explain(best_freq_mod, 
-                            data = X_freq, 
-                            y = y_freq, 
-                            label = "XGB", 
-                            weights = task_freq$weights$weight)
-imp_freq <- DALEX::model_parts(expl_freq, type = "raw")
-plot(imp_freq) 
-
-### det her virker ikke rigtigt 
-
-# 
-# expl_sev  <- explain_mlr3(best_sev_mod,
-#                           data    = X_sev,
-#                           y       = y_sev,
-#                           label   = "xgb",
-#                           weights = task_S$weights$weight)
-# imp_sev   <- model_parts(expl_sev, type = "raw")
-# plot(imp_sev) 
-
 
 
 
@@ -606,49 +576,6 @@ predictor_sev <- Predictor$new(best_sev_mod,
 
 shap_sev <- Shapley$new(predictor_sev, x.interest = X_sev[1, ])
 plot(shap_sev)
-
-
-#### shaples for sev ----
-# pfun_sev <- function(object, newdata) {
-#   object$predict_newdata(newdata)$response  
-# }
-# 
-# sh_sev <- fastshap::explain(
-#   best_sev_mod,
-#   X = as.data.frame(X_sev),
-#   pred_wrapper = pfun_sev,
-#   nsim = 500
-# )
-
-
-
-
-
-# 
-# ## PDP og ICE  ---- Fungerer ikke endnu
-
-# predictor_freq <- Predictor$new(
-#   model = expl_freq$model,
-#   data  = X_freq,
-#   y     = y_freq,
-#   predict.function = function(m, d) {
-#     predict(expl_freq, newdata = d, type = "prob")[, 2]   # P(y = 1)
-#   },
-#   class = "classification"
-# )
-# 
-# ## 2.2  PDP + ICE for én variabel (fx Cost_claims_sum_history)
-# eff_freq <- FeatureEffect$new(
-#   predictor = predictor_freq,
-#   feature   = "Cost_claims_sum_history",   # brug præcis navn i X_freq
-#   method    = "pdp+ice"
-# )
-# 
-# p_freq <- plot(eff_freq) +
-#   ggtitle("Frequency – PDP + ICE for Cost_claims_sum_history")
-# 
-
-## ale plots ----
 
 
 ######################################## frek ale 
@@ -732,7 +659,7 @@ final_xgb_s <- lrn(
   "regr.xgboost",
   predict_type        = "response",
   nrounds             = best_par_s[[1]]$regr.xgboost.nrounds,
-  max_depth           = best_par_s[[1]]$regr.xgboost.max_depth,
+  max_depth           = 2,
   eta                 = best_par_s[[1]]$regr.xgboost.eta,
   subsample           = best_par_s[[1]]$regr.xgboost.subsample,
   colsample_bytree    = best_par_s[[1]]$regr.xgboost.colsample_bytree,
@@ -846,7 +773,7 @@ params <- list(
   max_depth = max_depth,
   subsample = subsample
 )
-xgb_reg <- xgb.train(
+xgb_class <- xgb.train(
   params  = params,
   data    = dtrain,
   nrounds = nrounds,
@@ -854,29 +781,23 @@ xgb_reg <- xgb.train(
 )
 
 
-glex_obj <- glex(xgb_reg, X)
+glex_obj_F <- glex(xgb_class, X)
 
 
 vars_rm  <- c("Date_birth", "Max_Date_birth")
-cols_rm  <- grep(paste(vars_rm, collapse = "|"), colnames(glex_obj$m), value = TRUE)
-m_db     <- glex_obj$m
-m_db[, cols_rm] <- 0
-pred_db  <- rowSums(m_db) + glex_obj$intercept
+cols_rm_F  <- grep(paste(vars_rm, collapse = "|"), colnames(glex_obj_F$m), value = TRUE)
+m_db_F     <- glex_obj_F$m
+m_db_F[, cols_rm] <- 0
+pred_db_F  <- rowSums(m_db_F) + glex_obj_F$intercept
 
 
-pred_org <- predict(xgb_reg, X)
+pred_org_F <- predict(xgb_class, X)
 
 
-plot(pred_org, pred_db, xlab = "original", ylab = "debiased")
+plot(pred_org_F, pred_db_F, xlab = "original", ylab = "debiased")
 abline(0, 1)
-diff <- (rowSums(glex_obj$m) + glex_obj$intercept) - pred_org
+diff <- (rowSums(glex_obj_F$m) + glex_obj_F$intercept) - pred_org_F
 print(c(max = max(abs(diff)), mean = mean(abs(diff))))
-
-hist(glex_obj$shap[["Date_birth"]]) 
-
-
-
-formula(glex_obj$m)
 
 
 #---------------------
@@ -894,7 +815,7 @@ bp <- as.list(best_at_s$tuning_result$x)[[1]]
 eta               <- bp$regr.xgboost.eta
 nrounds           <- bp$regr.xgboost.nrounds
 subsample         <- bp$regr.xgboost.subsample
-max_depth         <- bp$regr.xgboost.max_depth
+max_depth         <- 2
 colsample_bytree  <- bp$regr.xgboost.colsample_bytree
 min_child_weight  <- bp$regr.xgboost.min_child_weight
 
@@ -924,7 +845,6 @@ xgb_reg <- xgb.train(
 
 glex_obj <- glex(xgb_reg, X)
 
-
 vars_rm  <- c("Date_birth", "Max_Date_birth")
 cols_rm  <- grep(paste(vars_rm, collapse = "|"), colnames(glex_obj$m), value = TRUE)
 m_db     <- glex_obj$m
@@ -949,13 +869,125 @@ shap_birth_df <- data.frame(
 
 head(shap_birth_df)
 
-# Optional: Plot relationship
 library(ggplot2)
 ggplot(shap_birth_df, aes(x = Date_birth, y = shap_value)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "loess") +
+  scale_y_continuous(limits = c(-0.05, 0.05)) +
   labs(title = "SHAP Value vs Date of Birth", y = "SHAP", x = "Date of Birth")
 
+#-------------------------------------------------------------------------------
+
+# MSE FINAL COMPARISON ----------------------------------------------------
+
+
+rr_sev_interp$prediction()
+rr_freq_interp$prediction()
+
+
+DATA <- data_trans(data)
+N <- nrow(DATA)
+train_idx <- sample(seq_len(N), size = 0.8 * N)
+
+train <- DATA[train_idx, ]
+test <- DATA[-train_idx, ]
+
+task_freq_train <- task_freq$clone()$filter(train_idx)
+task_sev_train <- task_S$clone()$filter(train_idx)
+
+lrn_freq_final <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
+lrn_sev_final <- best_at_s$clone(deep = TRUE)$train(task_sev_train)
+
+E_X <- lrn_sev_final$predict_newdata(test)
+E_X
+E_N <- lrn_freq_final$predict_newdata(test)
+E_N
+
+res <- data.table::data.table(
+  pred_N = E_N$prob[, 1],
+  pred_X = exp(E_X$response)
+)
+res <- res %>% dplyr::mutate(pred_comb = pred_N * pred_X)
+
+mse_combined <- mean((res$pred_comb - test$Cost_claim_this_year)^2)
+mse_baseline <- mean((test$Cost_claim_this_year - mean(train$Cost_claim_this_year))^2)
+
+
+
+
+m_db     <- glex_obj$m
+m_db[, cols_rm] <- 0
+pred_db  <- rowSums(m_db) + glex_obj$intercept
+pred_org <- predict(xgb_reg, X) 
+
+MSE_S = (pred_db - as.numeric(task_S$truth()))^2
+
+m_db_F     <- glex_obj_F$m
+m_db_F[, cols_rm] <- 0
+pred_db_F  <- rowSums(m_db_F) + glex_obj_F$intercept
+pred_org_F <- predict(xgb_class, X) 
+
+MSE_F = (pred_db_F - as.numeric(task_freq$truth()))^2
+
+mean(MSE_F)
+
+#-------
+DATA    <- data_trans(data)
+set.seed(42)
+N       <- nrow(DATA)
+train_i <- sample(seq_len(N), size = 0.8 * N)
+
+# 2) Klon og filtrer Tasks
+task_S_train    <- task_S$clone()$filter(train_i)
+task_S_test     <- task_S$clone()$filter(-train_i)
+task_freq_train <- task_freq$clone()$filter(train_i)
+task_freq_test  <- task_freq$clone()$filter(-train_i)
+
+# 3) Træn de endelige modeller på trænings-Tasks
+lrn_sev  <- best_at_s$clone(deep = TRUE)$train(task_S_train)
+lrn_freq <- best_at_f$clone(deep = TRUE)$train(task_freq_train)
+
+# 4) Forudsig direkte på test-Tasks (undgå 0-cols fejl)
+pred_org_s <- lrn_sev$predict(task_S_test)$response
+pred_org_f <- lrn_freq$predict(task_freq_test)$prob[, 2]
+
+# 5) Træk test-data ud som data.frames for DALEX
+X_test_s <- as.data.frame(task_S_test$data())
+y_test_s <- task_S_test$truth()
+X_test_f <- as.data.frame(task_freq_test$data())
+y_test_f <- task_freq_test$truth()
+
+# 2) Debiased‐predictions vha. glex_obj$m
+cols_rm <- c("Date_birth", "Date_driving_licence")
+
+## Severity
+m_s      <- glex_obj$m
+int_s    <- glex_obj$intercept
+m_s_db   <- m_s
+m_s_db[, cols_rm] <- 0
+pred_db_s <- rowSums(m_s_db) + int_s
+
+## Frequency
+m_f      <- glex_obj_F$m
+int_f    <- glex_obj_F$intercept
+m_f_db   <- m_f
+m_f_db[, cols_rm] <- 0
+pred_db_f <- rowSums(m_f_db) + int_f
+
+# 3) Beregn MSE på test‐data
+y_test_s <- task_S_test$truth()
+y_test_f <- task_freq_test$truth()
+
+mse_org_s <- mean((pred_org_s - y_test_s)^2)
+mse_db_s  <- mean((pred_db_s  - y_test_s)^2)
+mse_org_f <- mean((pred_org_f - y_test_f)^2)
+mse_db_f  <- mean((pred_db_f  - y_test_f)^2)
+
+# 4) Vis resultater
+list(
+  severity  = c(original = mse_org_s, debiased = mse_db_s),
+  frequency = c(original = mse_org_f, debiased = mse_db_f)
+)
 
 
 
